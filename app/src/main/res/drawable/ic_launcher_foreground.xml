@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple shutter-ring glyph: a red ring (the typewriter-ribbon red accent) on a
+         dark ground, standing in for a lens/aperture. -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#f2ece2"
+        android:strokeWidth="6"
+        android:pathData="M54,30 a24,24 0 1,0 0.1,0 z" />
+    <path
+        android:fillColor="#a1382e"
+        android:pathData="M54,44 a10,10 0 1,0 0.1,0 z" />
+</vector>

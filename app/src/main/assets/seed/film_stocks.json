@@ -1,0 +1,67 @@
+[
+  {
+    "name": "8mm",
+    "gauge": "Regular 8 / Super 8",
+    "grainIntensity": 0.7,
+    "grainSize": 1.6,
+    "warmth": 0.3,
+    "saturation": 1.1,
+    "vignette": 0.35,
+    "highlightRolloff": 0.3,
+    "shadowLift": 0.35,
+    "softness": 0.5,
+    "notes": "Small-format home-movie stock (Kodachrome 40 / Ektachrome 64T era): dominant grain, low resolution, warm cast, hazy lifted blacks, strong corner vignetting from cheap lenses."
+  },
+  {
+    "name": "16mm",
+    "gauge": "16mm",
+    "grainIntensity": 0.4,
+    "grainSize": 1.2,
+    "warmth": 0.12,
+    "saturation": 1.15,
+    "vignette": 0.18,
+    "highlightRolloff": 0.45,
+    "shadowLift": 0.2,
+    "softness": 0.25,
+    "notes": "Documentary/indie/TV workhorse gauge: organic but controlled grain, richer color depth and shadow detail than 8mm, still sharp enough for projection."
+  },
+  {
+    "name": "Super 16",
+    "gauge": "Super 16mm",
+    "grainIntensity": 0.32,
+    "grainSize": 1.05,
+    "warmth": 0.09,
+    "saturation": 1.13,
+    "vignette": 0.13,
+    "highlightRolloff": 0.48,
+    "shadowLift": 0.16,
+    "softness": 0.16,
+    "notes": "Same 16mm stock, wider exposed frame (less cropping, better negative-to-grain ratio): visibly cleaner and more controlled than standard 16mm while keeping its organic character."
+  },
+  {
+    "name": "35mm",
+    "gauge": "35mm",
+    "grainIntensity": 0.18,
+    "grainSize": 0.8,
+    "warmth": 0.05,
+    "saturation": 1.1,
+    "vignette": 0.08,
+    "highlightRolloff": 0.55,
+    "shadowLift": 0.12,
+    "softness": 0.08,
+    "notes": "Cinema-standard gauge: fine, almost invisible grain, high color fidelity, and the gentle highlight rolloff people mean by 'the movie look'."
+  },
+  {
+    "name": "Super 35",
+    "gauge": "Super 35mm",
+    "grainIntensity": 0.12,
+    "grainSize": 0.65,
+    "warmth": 0.02,
+    "saturation": 1.05,
+    "vignette": 0.05,
+    "highlightRolloff": 0.6,
+    "shadowLift": 0.08,
+    "softness": 0.04,
+    "notes": "The modern feature-film production standard: the cleanest, sharpest, most neutral gauge here - grain reads as texture, not noise."
+  }
+]
