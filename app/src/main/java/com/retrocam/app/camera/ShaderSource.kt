@@ -52,6 +52,9 @@ object ShaderSource {
         uniform float uLutStrength;     // 0..1, 0 = LUT off entirely (sLut left unbound/unused)
         uniform float uLutSize;         // color depth per axis, e.g. 33.0 for a 33x33x33 cube
         uniform float uLutTilesPerRow;  // sLut is a square grid of uLutSize B-slices, e.g. 6.0 for 33 slices in a 6x6 grid
+        uniform float uClarity;         // -1..1, Fuji Clarity (-5..+5 normalized) - local/midtone contrast, not blur
+        uniform float uColorChromeWarm; // 0..1, Fuji Color Chrome Effect strength (reds/yellows/greens)
+        uniform float uColorChromeBlue; // 0..1, Fuji Color Chrome FX Blue strength (blues)
 
         vec3 applyWarmth(vec3 c, float w) {
             return c + vec3(w * 0.08, -abs(w) * 0.02, -w * 0.08);
@@ -166,8 +169,51 @@ object ShaderSource {
             return sum;
         }
 
+        // Fuji's own description of Clarity: "increase definition while
+        // altering tones in highlights and shadows as little as possible" -
+        // a local/midtone contrast boost, NOT the same mechanism as
+        // softness/sharpness (a blur-radius trade). `detail` is the
+        // pre-grade source pixel minus its own local neighborhood average
+        // (a cheap unsharp-mask-style high-pass) - computed once in main()
+        // from the UNGRADED source and shared with applyColorChrome below,
+        // rather than each re-blurring an already-graded image (which
+        // would need re-running the whole grading chain per blur tap).
+        vec3 applyClarity(vec3 c, vec3 detail, float amount) {
+            float luma = dot(c, vec3(0.299, 0.587, 0.114));
+            float midtoneWeight = clamp(1.0 - abs(luma - 0.5) * 1.6, 0.0, 1.0);
+            return c + detail * amount * midtoneWeight;
+        }
+
+        // Fuji's own description of Color Chrome Effect / FX Blue:
+        // "increase the range of tones available for rendering colors
+        // that tend to be highly saturated, such as reds, yellows, and
+        // greens" (Effect) / "...for rendering blues" (FX Blue) - i.e.
+        // NOT a flat saturation, contrast, or warmth nudge (which is what
+        // this used to be approximated as) but a chroma-and-hue-gated
+        // local contrast boost, using the same shared `detail` term as
+        // applyClarity above.
+        vec3 applyColorChrome(vec3 c, vec3 detail, float warmStrength, float blueStrength) {
+            float maxc = max(c.r, max(c.g, c.b));
+            float minc = min(c.r, min(c.g, c.b));
+            float chroma = maxc - minc;
+            if (chroma < 0.02) return c;
+            float hue;
+            if (maxc == c.r) hue = mod((c.g - c.b) / chroma, 6.0) / 6.0;
+            else if (maxc == c.g) hue = ((c.b - c.r) / chroma + 2.0) / 6.0;
+            else hue = ((c.r - c.g) / chroma + 4.0) / 6.0;
+
+            // Warm band (reds/yellows/greens, ~0-150deg) for Color Chrome
+            // Effect; blue band (~190-260deg) for Color Chrome FX Blue.
+            float warmWeight = 1.0 - smoothstep(0.35, 0.46, hue);
+            float blueWeight = smoothstep(0.5, 0.58, hue) * (1.0 - smoothstep(0.68, 0.76, hue));
+
+            float amount = chroma * (warmStrength * warmWeight + blueStrength * blueWeight);
+            return c + detail * amount;
+        }
+
         void main() {
-            vec3 color = texture2D(sTexture, vTexCoord).rgb;
+            vec3 original = texture2D(sTexture, vTexCoord).rgb;
+            vec3 color = original;
             if (uSoftness > 0.001) {
                 vec3 blurred = sampleSoft(vTexCoord, mix(0.0, 3.0, uSoftness));
                 color = mix(color, blurred, uSoftness);
@@ -178,6 +224,16 @@ object ShaderSource {
             color = applyContrast(color, uContrast);
             color = applyHighlightRolloff(color, uHighlightRolloff);
             color = applyShadowLift(color, uShadowLift);
+
+            if (uClarity != 0.0 || uColorChromeWarm > 0.001 || uColorChromeBlue > 0.001) {
+                vec3 detail = original - sampleSoft(vTexCoord, 2.5);
+                if (uClarity != 0.0) {
+                    color = applyClarity(color, detail, uClarity);
+                }
+                if (uColorChromeWarm > 0.001 || uColorChromeBlue > 0.001) {
+                    color = applyColorChrome(color, detail, uColorChromeWarm, uColorChromeBlue);
+                }
+            }
 
             // Creative LUT grade, layered on top of the parametric look
             // above rather than replacing it - a recipe can use either,

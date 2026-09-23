@@ -34,6 +34,21 @@ data class RenderLook(
      * key; a differently-sized LUT would need real per-key metadata. */
     val lutKey: String = "",
     val lutStrength: Float = 1f,
+    /** Fuji's Clarity control (manual: "increase definition while
+     * altering tones in highlights and shadows as little as possible"),
+     * normalized from its real -5..+5 range to -1..1 - a local/midtone
+     * contrast boost, NOT a blur-radius reduction like softness/sharpness
+     * (those are a different, genuinely global mechanism) - see
+     * ShaderSource.applyClarity. 0 = no-op. */
+    val clarity: Float = 0f,
+    /** Fuji Color Chrome Effect / FX Blue (manual: "increase the range
+     * of tones available for rendering colors that tend to be highly
+     * saturated, such as reds, yellows, and greens" / "...for rendering
+     * blues") - 0..1 strength, gates a chroma-and-hue-targeted local
+     * contrast boost (see ShaderSource.applyColorChrome), not a flat
+     * saturation/contrast/warmth nudge. 0 = off. */
+    val colorChromeWarm: Float = 0f,
+    val colorChromeBlue: Float = 0f,
 ) {
     companion object {
         val NEUTRAL = RenderLook(
@@ -134,26 +149,27 @@ fun Recipe.toRenderLook(): RenderLook {
     val highlightRolloff = clamp01(0.5f - highlight / 8f + drStrength * 0.25f)
     val shadowLift = clamp01(0.35f - shadow / 10f + drStrength * 0.12f)
 
+    // Per the X100VI manual, Color Chrome Effect/FX Blue don't do a flat
+    // saturation/contrast/warmth nudge at all - they add tonal gradation
+    // specifically within already-saturated reds/yellows/greens (Effect)
+    // or blues (FX Blue), so they're passed through as their own
+    // chroma-and-hue-gated shader pass instead - see
+    // ShaderSource.applyColorChrome and RenderLook.colorChromeWarm/Blue.
     val colorChromeStrength = when (colorChromeEffect) {
         EffectStrength.OFF -> 0f
         EffectStrength.WEAK -> 0.4f
         EffectStrength.STRONG -> 0.8f
     }
-    // Color Chrome FX Blue specifically deepens blues/cyans (skies, water);
-    // the single-pass shader has no per-hue path, so the closest genuine
-    // analogue available is a small, strength-scaled cool push.
     val fxBlueStrength = when (colorChromeFxBlue) {
         EffectStrength.OFF -> 0f
         EffectStrength.WEAK -> 0.4f
         EffectStrength.STRONG -> 0.8f
     }
 
-    // Color Chrome Effect deepens tonal gradation in saturated colors
-    // instead of letting them clip flat - approximated as extra saturation
-    // and contrast, since there's no per-luma color path to hook into here.
-    val saturation = clamp(base.baseSaturation * (1f + color / 8f) * (1f + colorChromeStrength * 0.1f), 0f, 2f)
+    // Fuji Color: -4..+4, adjusts color density (saturation).
+    val saturation = clamp(base.baseSaturation * (1f + color / 8f), 0f, 2f)
     val contrast = clamp(
-        base.baseContrast * (1f + (highlight + shadow) / 16f) * (1f - drStrength * 0.1f) * (1f + colorChromeStrength * 0.06f),
+        base.baseContrast * (1f + (highlight + shadow) / 16f) * (1f - drStrength * 0.1f),
         0.5f,
         1.6f,
     )
@@ -180,16 +196,19 @@ fun Recipe.toRenderLook(): RenderLook {
         "${gaugeKey}_$tier"
     }
 
-    // Sharpness and Clarity both eat into the same optical-softness budget,
-    // but differently: Sharpness is global edge/acutance, Clarity is Fuji's
-    // local/midtone contrast-texture control.
+    // Fuji Sharpness: -4..+4, edge/acutance sharpening - there's no edge
+    // detection in this single-pass shader, so the closest available
+    // proxy is still trading against the same optical-softness budget as
+    // High ISO NR. Clarity (-5..+5) gets its own real local-contrast pass
+    // now instead (see RenderLook.clarity / ShaderSource.applyClarity),
+    // so it's deliberately NOT folded in here anymore.
     val softness = clamp01(
-        -sharpness / 8f - clarity / 10f - nrFactor * 0.15f + grainSoftnessCoupling(grainIntensity),
+        -sharpness / 8f - nrFactor * 0.15f + grainSoftnessCoupling(grainIntensity),
     )
 
     return RenderLook(
         name = name,
-        warmth = clamp(base.baseWarmth + wbWarmth * 0.6f + whiteBalanceWarmth - fxBlueStrength * 0.05f, -1f, 1f),
+        warmth = clamp(base.baseWarmth + wbWarmth * 0.6f + whiteBalanceWarmth, -1f, 1f),
         tintGreenMagenta = 0f,
         saturation = saturation,
         contrast = contrast,
@@ -200,6 +219,10 @@ fun Recipe.toRenderLook(): RenderLook {
         softness = softness,
         vignette = 0.08f,
         grainSetKey = grainSetKey,
+        // Fuji Clarity: -5..+5, normalized to -1..1.
+        clarity = clamp(clarity / 5f, -1f, 1f),
+        colorChromeWarm = colorChromeStrength,
+        colorChromeBlue = fxBlueStrength,
     )
 }
 

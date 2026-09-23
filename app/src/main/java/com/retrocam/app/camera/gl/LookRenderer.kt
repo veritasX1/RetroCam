@@ -33,6 +33,9 @@ class LookRenderer {
     private var uLutStrengthLoc = 0
     private var uLutSizeLoc = 0
     private var uLutTilesPerRowLoc = 0
+    private var uClarityLoc = 0
+    private var uColorChromeWarmLoc = 0
+    private var uColorChromeBlueLoc = 0
 
     private var grainTextureId = -1
     private var currentGrainSetKey: String? = null
@@ -68,6 +71,9 @@ class LookRenderer {
         uLutStrengthLoc = GLES20.glGetUniformLocation(program, "uLutStrength")
         uLutSizeLoc = GLES20.glGetUniformLocation(program, "uLutSize")
         uLutTilesPerRowLoc = GLES20.glGetUniformLocation(program, "uLutTilesPerRow")
+        uClarityLoc = GLES20.glGetUniformLocation(program, "uClarity")
+        uColorChromeWarmLoc = GLES20.glGetUniformLocation(program, "uColorChromeWarm")
+        uColorChromeBlueLoc = GLES20.glGetUniformLocation(program, "uColorChromeBlue")
         // A sensible default so grainTextureId is always a valid texture,
         // even before the first look with grain enabled is drawn.
         grainTextureId = GrainTexture.upload(appContext, "35mm_standard")
@@ -156,6 +162,9 @@ class LookRenderer {
         GLES20.glUniform1f(uLutStrengthLoc, if (look.lutKey.isEmpty()) 0f else look.lutStrength)
         GLES20.glUniform1f(uLutSizeLoc, LutTexture.SIZE)
         GLES20.glUniform1f(uLutTilesPerRowLoc, LutTexture.TILES_PER_ROW)
+        GLES20.glUniform1f(uClarityLoc, look.clarity)
+        GLES20.glUniform1f(uColorChromeWarmLoc, look.colorChromeWarm)
+        GLES20.glUniform1f(uColorChromeBlueLoc, look.colorChromeBlue)
 
         GLES20.glUniform1f(uWarmthLoc, look.warmth)
         GLES20.glUniform1f(uSaturationLoc, look.saturation)
