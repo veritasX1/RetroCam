@@ -54,6 +54,19 @@ object GlUtil {
         1f, 1f, 0f, 1f,
     )
 
+    /** Same quad, V flipped - a plain 2D texture uploaded from an Android
+     * Bitmap has row 0 (V=0) as the bitmap's TOP row, whereas the OES
+     * camera texture's SurfaceTexture transform matrix already accounts
+     * for that flip itself (which fullScreenQuadTexCoords assumes). Use
+     * this one when sampling a Bitmap-uploaded sampler2D directly with an
+     * identity texture matrix (see PhotoLookBaker) instead. */
+    fun fullScreenQuadTexCoordsFlippedV(): FloatBuffer = floatBufferOf(
+        0f, 1f, 0f, 1f,
+        1f, 1f, 0f, 1f,
+        0f, 0f, 0f, 1f,
+        1f, 0f, 0f, 1f,
+    )
+
     private fun floatBufferOf(vararg values: Float): FloatBuffer =
         ByteBuffer.allocateDirect(values.size * 4)
             .order(ByteOrder.nativeOrder())

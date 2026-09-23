@@ -1,16 +1,27 @@
 # RetroCam
 
-An Android camera app that renders a real film look live, in the viewfinder, instead of applying a filter after the fact.
+An Android camera app that renders a real film look into every photo and video — applied once, right after capture, against the camera's own full-resolution output, the same way a real viewfinder camera's optical finder never showed you the exact exposed film either.
 
 ## Why this exists
 
-Most "retro filter" camera apps apply a color-grade preset to a digital-clean capture after the shutter fires — you're editing a photo, not shooting film. RetroCam tries the opposite approach: a custom OpenGL pipeline sits between the camera sensor and every output (preview, photo, video), so grain, color science, halation, and softness are baked into the actual capture, and what you see in the viewfinder is what you get. It leans specifically on:
+Most "retro filter" camera apps apply a color-grade preset to a digital-clean capture after the shutter fires — you're editing a photo, not shooting film. RetroCam leans specifically on:
 
 - **Real scanned film grain**, not procedural noise — actual extracted grain plates (5 gauges × standard/heavy tiers), not a random-noise shader trying to fake the look.
 - **Fuji-recipe-style color grading** for photos (film simulation, dynamic range, white balance shift, highlight/shadow, color chrome effect, grain, clarity — the same parameter set X-series shooters already know from "recipe" culture), and **gauge-based film-stock presets** for video (8mm through 35mm, each with its own grain/color/softness character).
 - **A date-back-style stamp**, burned into the pixel data like a real point-and-shoot's LED date back, right down to choosing how the LEDs' light actually composites onto the film underneath (see Blend modes below).
+- **Full-resolution capture first, look applied after** — the viewfinder shows the raw feed so `ImageCapture`/`VideoCapture` can each reach the sensor's/encoder's real capability, then the exact same shader that used to run live gets baked into the actual photo or video file, once, offscreen (see Architecture) - it wasn't always built this way; see "Photo & video resolution" under Known issues for why this changed.
 
 It's a personal project, built and iterated on with a physical test device rather than an emulator, prioritizing "does this look and feel like a real camera" over API completeness.
+
+## Screenshots
+
+| Camera screen | Video film stocks |
+| --- | --- |
+| ![Camera screen with recipe picker](docs/screenshots/camera-main.jpg) | ![Video mode with gauge-based film stock picker](docs/screenshots/video-film-stocks.jpg) |
+
+| Settings | Date stamp styling |
+| --- | --- |
+| ![Settings screen](docs/screenshots/settings.png) | ![Date/location stamp settings with live LED-glow preview](docs/screenshots/date-stamp.png) |
 
 ## Features
 
@@ -37,30 +48,33 @@ Tapping the last-capture thumbnail (for a photo, not a video) opens a small iOS-
 
 ## Architecture
 
-- **CameraX** (`androidx.camera`) for camera lifecycle/use-case management (Preview, ImageCapture, VideoCapture).
-- **A custom `CameraEffect`/`SurfaceProcessor`** (`RetroCamSurfaceProcessor.kt`) intercepts the camera's OES texture stream on a dedicated GL thread and renders every frame through a fragment shader (`ShaderSource.kt` via `LookRenderer.kt`) that applies warmth/tint/saturation/contrast/highlight-rolloff/shadow-lift/grain/softness/vignette — the same shader pass drives preview, photo capture, and video capture, so all three actually match.
+- **CameraX** (`androidx.camera`) for camera lifecycle/use-case management (Preview, ImageCapture, VideoCapture) — no custom `CameraEffect`/`SurfaceProcessor` attached to any of them; each binds and captures independently, at whatever resolution the camera actually supports.
+- **The look is baked in after capture, not live**, via `LookRenderer`/`ShaderSource.kt` (warmth/tint/saturation/contrast/highlight-rolloff/shadow-lift/grain/softness/vignette, one shared shader source for both paths below) — the live viewfinder shows the raw, un-graded feed, like a real viewfinder/rangefinder camera never showing an exact preview of the exposed film either:
+  - **Photos**: `PhotoLookBaker.kt` runs one offscreen GL pass over the captured JPEG at its own full resolution, then `PhotoPostProcessor.kt` burns in the date/location stamp (`Canvas`/`Paint`, blend modes, blur mask filters — needs full 2D drawing control the shader doesn't give it) and EXIF.
+  - **Video**: `VideoLookBaker.kt` decodes the recorded file frame-by-frame (`MediaCodec`, hardware AVC decoder with a software-decoder fallback for hardware-session contention — see its comments), re-renders each frame through the same shader into a fresh encoder, and muxes the result back together with the original (untouched) audio track. `VideoPostProcessor.kt` wraps this the same "never touch the original until a full replacement exists" way `PhotoPostProcessor` does for photos.
 - **Room** (`RetroCamDatabase.kt`) for user-editable recipes and film stocks, seeded from JSON (`assets/seed/`) on first run.
 - **DataStore** (`SettingsRepository`/`Settings.kt`) for app-wide settings (grain override, date/location stamp config, shutter sound, softness, selected camera/recipe/stock, etc).
 - **Jetpack Compose** for the whole UI (`ui/`).
-- The date/location stamp is burned in as a *post-processing* pass (`PhotoPostProcessor.kt`) after the photo file is already saved, separate from the live GL pipeline — it needs full `Canvas`/`Paint` control (blend modes, blur mask filters for the LED glow) that the shader pipeline doesn't give it.
+
+This is a deliberate change from the app's original design (a live `CameraEffect`/`SurfaceProcessor` intercepting every frame, so preview/photo/video all matched exactly) — see "Photo & video resolution" below for why.
 
 ## Known issues / open work
 
-### Camera-switch crash (open, deep-dived, not solved)
-Switching cameras (front/back/any lens) can crash the app with a native `SIGSEGV` (`libgui.so ConsumerBase::abandon()`, called from `SurfaceTexture.release()`, null pointer, fault addr `0x80`). Root cause: a race between this app's GL surface teardown/rebuild (required on every camera switch, since the effect pipeline owns its own `SurfaceTexture`/EGL context) and the camera HAL's own native teardown of the same underlying object.
+### Camera-switch crash (open, deep-dived, likely much improved as a side effect, not yet re-verified)
+Previously: switching cameras (front/back/any lens) could crash the app with a native `SIGSEGV` (`libgui.so ConsumerBase::abandon()`, called from `SurfaceTexture.release()`, null pointer, fault addr `0x80`) — a race between the old live effect pipeline's GL surface teardown/rebuild (required on every camera switch, since it owned its own `SurfaceTexture`/EGL context) and the camera HAL's own native teardown of the same underlying object. Tried, in order, with partial success each time: removing a forced/timed `SurfaceTexture.release()` fallback, serializing rebinds, disabling camera-switch UI during recording, a CameraX 1.4.0→1.6.2 upgrade, a post-rebind UI interaction lock, forcing `PreviewView` into `COMPATIBLE` mode — none fully closed it.
 
-What's been tried, in order:
-1. Removed a forced/timed `SurfaceTexture.release()` fallback that was racing CameraX's own "done with this surface" callback — measurably reduced crash frequency.
-2. Serialized rebinds (generation-counter guard) so two overlapping camera-switch rebinds can't stack.
-3. Disabled camera-switch UI while actively recording (the originally-reported exact scenario is now impossible).
-4. Upgraded CameraX 1.4.0 → 1.5.3, which ships a fix for "crash when effect is being activated after SurfaceProcessor is shut down" (`b/414150174`) — a very similar-sounding upstream bug. Real improvement on its own merits, but did **not** eliminate this specific crash; post-upgrade the crashing thread is CameraX's own internal GL thread, not this app's, suggesting the remaining race may live inside the library itself.
-5. Added a 2-second UI lock after any rebind (camera/recipe/film-stock chips disabled, not just dimmed) to prevent immediate further interaction during the fragile teardown window.
-6. Tried forcing `PreviewView` into `COMPATIBLE` (TextureView) mode instead of the default `PERFORMANCE` (SurfaceView) mode, reasoning TextureView's View-owned surface lifecycle might be less prone to the race. No improvement; reverted.
+Since dropping the live effect entirely (see below), there is no longer any custom `SurfaceProcessor`/`SurfaceTexture` for a camera switch to race at all in the normal preview/photo/video path — the root mechanism this whole crash category came from is simply gone from that path. This is a real, structural change, not another mitigation layer, but it hasn't been re-verified with the same stress-test protocol used against the original bug (rapid repeated camera switches) — do that before fully closing this out.
 
-None of the above fully closes it — a controlled test of *purely repeated camera switches alone*, with no other interaction, still crashes occasionally. This looks like a genuine, still-live native concurrency bug in the Android camera/graphics stack under this exact architecture (a custom live GL effect pipeline + frequent camera switches), not something fixable purely at the app level. The real remaining lever is architectural: stop tearing down and rebuilding the GL/EGL/SurfaceProcessor pipeline on every camera switch. Treated as a known residual risk for now rather than something to keep patching reactively.
+### Photo & video resolution vs. the stock camera app (root cause NOT found, currently accepted as-is)
+User-reported (with an independent ChatGPT code review as a second opinion): RetroCam photos looked softer/"more digital" than the stock camera app's. A controlled tripod comparison found a real, measurable cause: RetroCam's `ImageCapture` was landing on **3264×2448** while the stock camera reached the sensor's real **4080×3072**. Extensively investigated and NOT resolved despite ruling out every theory tried:
+- Not a `ResolutionSelector` issue (`HIGHEST_AVAILABLE_STRATEGY` and an explicit `Size(4080,3072)` bound both had zero effect).
+- Not the live `CameraEffect` (confirmed via CameraX's own `SupportedOutputSizesCollector` debug logging - merely having any effect present in the `UseCaseGroup` truncated the candidate output-size list for every use case in the group, but removing the effect entirely made no difference either).
+- Not `VideoCapture`'s presence (removed it from the group entirely - no change).
+- Not `CAPTURE_MODE_MAXIMIZE_QUALITY` (removed it - no change).
+- Not the CameraX version (upgraded 1.5.3 → 1.6.2, a real stable release bump kept regardless - no change; the stock camera app bundles CameraX 1.7.0-alpha01, one major version ahead, and a different Camera2 backend (`camera-camera2-pipe`) - untested, since adopting an alpha dependency and a different backend is a bigger, riskier change than anything else tried here).
+- Confirmed via the stock camera app's own APK that it never attaches a `CameraEffect` at all (no such reference anywhere in its dex) - ruling out "just copy what it does" as a simple fix, since this app's whole point is a live-matching look, which needed an effect (now moot, since the effect is gone entirely and the gap persists anyway).
 
-### Photo sharpness vs. the stock camera app
-User-reported (with an independent ChatGPT code review as a second opinion, cross-checked against the actual code rather than taken at face value): RetroCam photos look softer/"more digital" than the same scene shot with the stock camera app. Two concrete, verified issues have been fixed - `uTexelSize` (drove the shader's softness/grain texel math) was computed from each output surface's own resolution instead of the actual camera input resolution, and `ImageCapture` had no explicit capture mode (defaulted to `MINIMIZE_LATENCY`, now `MAXIMIZE_QUALITY`). The more serious theory - that the shared GL input stream might be lower-resolution than the photo output, i.e. an internal downscale-then-upscale - was checked directly via logging and is **not** the case on the test device (input and output both 3264x2448). Whether a real gap remains after these fixes hasn't been confirmed with a clean controlled test yet (same well-focused static scene, RetroCam with grain/softness off and no recipe, vs. the stock camera, back to back) - that's the next step before considering the bigger architecture change the review suggested (routing `ImageCapture` through a separate `ImageProcessor`-based pipeline instead of the same live `SurfaceProcessor` used for preview/video).
+Currently accepted as an unresolved, lower-priority gap - `ImageCapture`/`VideoCapture` still aren't reaching the sensor's true maximum resolution, and it isn't yet understood why. The real remaining untried lever is CameraX's `camera-camera2-pipe` backend (matching what the stock app uses) or a fully separate `bindToLifecycle()` session just for `ImageCapture`, both bigger changes than anything tried so far.
 
 ### OldRoll filter port (in progress)
 Porting a set of filter looks from the OldRoll app into RetroCam's recipe system, replacing/supplementing the existing Fuji-recipe-style presets — blocked on getting a look at OldRoll's actual filter list (not installed on the current test device).

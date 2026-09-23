@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuffXfermode
 import android.location.Location
@@ -14,7 +15,9 @@ import android.provider.MediaStore
 import androidx.core.content.res.ResourcesCompat
 import androidx.exifinterface.media.ExifInterface
 import com.retrocam.app.R
+import com.retrocam.app.camera.gl.PhotoLookBaker
 import com.retrocam.app.data.DateStampSettings
+import com.retrocam.app.data.RenderLook
 import com.retrocam.app.data.StampCorner
 import com.retrocam.app.data.StampTypeface
 import com.retrocam.app.data.formatDateStamp
@@ -24,27 +27,81 @@ import java.util.Date
 import kotlin.math.min
 
 /**
- * Runs after a photo is already saved (i.e. after the film-look GL pass
- * has been baked in by RetroCamSurfaceProcessor): optionally burns a
- * date/location stamp into the pixels like an old camera's date-back, and
- * always writes the active recipe (plus GPS, if enabled) into the file's
- * EXIF - see README "Privacy" for why this exists instead of silently
- * tracking anything.
+ * Runs after a photo is already saved: bakes in the active look (warmth/
+ * grain/softness/vignette/etc, via PhotoLookBaker) at the photo's own full
+ * resolution, optionally burns a date/location stamp into the pixels like
+ * an old camera's date-back, and always writes the active recipe (plus
+ * GPS, if enabled) into the file's EXIF - see README "Privacy" for why
+ * this exists instead of silently tracking anything.
+ *
+ * The look bake used to happen live, for free, inside
+ * RetroCamSurfaceProcessor's GL pass - ImageCapture was routed through
+ * that same shared effect as Preview/VideoCapture. It's done here instead
+ * now because that shared GL stream's Camera2 stream-combination
+ * negotiation was silently capping photo resolution well below the
+ * sensor's real capability; ImageCapture now binds as an independent,
+ * non-effect use case (see CameraViewModel.tryBind) to reach full
+ * resolution, and this is where its look gets applied instead - once,
+ * offscreen, at that full resolution, via the exact same shader math.
  */
 object PhotoPostProcessor {
 
     suspend fun process(
         context: Context,
         uri: Uri,
+        look: RenderLook,
         recipeDescription: String,
         dateStamp: DateStampSettings,
         locationText: String?,
         location: Location?,
     ) = withContext(Dispatchers.IO) {
+        bakeLook(context, uri, look)
         if (dateStamp.enabled || locationText != null) {
             burnInStamp(context, uri, dateStamp, locationText)
         }
         writeExif(context, uri, recipeDescription, location)
+    }
+
+    // ImageCapture, no longer routed through the live GL effect, follows
+    // CameraX's standard (non-effect) JPEG behavior: rotation is recorded
+    // as an EXIF orientation tag rather than baked into the pixels the way
+    // the old effect-pipeline output always was. Normalize to upright
+    // pixels here (matching that old invariant) before baking the look and
+    // writing back a plain JPEG with no orientation tag - everything
+    // downstream (burnInStamp, the gallery, Immich) can then keep assuming
+    // "pixels are already upright" like before, instead of every consumer
+    // needing to separately handle EXIF-orientation-aware rotation.
+    private fun bakeLook(context: Context, uri: Uri, look: RenderLook) {
+        val rotationDegrees = context.contentResolver.openInputStream(uri)
+            ?.use { ExifInterface(it).rotationDegrees } ?: 0
+        val decoded = context.contentResolver.openInputStream(uri)
+            ?.use { BitmapFactory.decodeStream(it) } ?: return
+        val upright = if (rotationDegrees != 0) {
+            val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+            Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { decoded.recycle() }
+        } else decoded
+
+        val graded = PhotoLookBaker.bake(context, upright, look)
+        upright.recycle()
+
+        val encoded = java.io.ByteArrayOutputStream().also { graded.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+        graded.recycle()
+        context.contentResolver.openOutputStream(uri, "wt")?.use { out -> out.write(encoded.toByteArray()) }
+        // Same staleness concern as burnInStamp's own update below - if no
+        // stamp follows this is the only content write, and other apps
+        // reading this URI's SIZE/DATE_MODIFIED could otherwise see
+        // metadata from the moment ImageCapture first inserted the row.
+        runCatching {
+            context.contentResolver.update(
+                uri,
+                ContentValues().apply {
+                    put(MediaStore.MediaColumns.SIZE, encoded.size())
+                    put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                },
+                null,
+                null,
+            )
+        }
     }
 
     private fun burnInStamp(context: Context, uri: Uri, dateStamp: DateStampSettings, locationText: String?) {
