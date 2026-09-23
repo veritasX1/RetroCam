@@ -25,6 +25,7 @@ data class RenderLook(
      * "8mm_heavy" - see GrainTexture. Empty when grainIntensity is 0, in
      * which case the renderer just leaves whatever was already bound. */
     val grainSetKey: String = "",
+    val grainBlendMode: GrainBlendMode = GrainBlendMode.FILMKORN,
 ) {
     companion object {
         val NEUTRAL = RenderLook(

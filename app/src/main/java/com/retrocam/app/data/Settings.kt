@@ -29,6 +29,18 @@ enum class CaptureMode { PHOTO, VIDEO }
  * per-recipe from GrainStrength/grainIntensity. */
 enum class GrainOverride { OFF, STANDARD, HEAVY }
 
+/** How the grain texture composites against the image, evaluated per-pixel
+ * in the shader (see ShaderSource.applyGrainBlend) - the same idea as the
+ * date stamp's Photoshop-style blend modes, but shaped for grain
+ * specifically since real film/sensor grain isn't equally visible
+ * everywhere: it reads much more strongly in shadows than in highlights
+ * (weak signal there, so the noise floor dominates - the same reason
+ * digital high-ISO noise is worst in shadows). FILMKORN is the physically-
+ * motivated default; the others are legacy/stylized alternatives. */
+enum class GrainBlendMode(val shaderValue: Float) {
+    NORMAL(0f), MULTIPLY(1f), FILMKORN(2f), LEUCHTEND(3f)
+}
+
 /** Sentinel id (Room autoIncrement rows never get 0) meaning "no filter" -
  * used for both recipes and film stocks, and doubles as the value an
  * unset preference resolves to, so a fresh install defaults to unfiltered
@@ -58,6 +70,7 @@ class SettingsRepository(private val context: Context) {
         val DATE_STAMP_ZERO_PAD = booleanPreferencesKey("date_stamp_zero_pad")
         val LOCATION_STAMP_MODE = stringPreferencesKey("location_stamp_mode")
         val GRAIN_OVERRIDE = stringPreferencesKey("grain_override")
+        val GRAIN_BLEND_MODE = stringPreferencesKey("grain_blend_mode")
     }
 
     val shutterSound: Flow<ShutterSound> = context.dataStore.data.map { prefs ->
@@ -175,6 +188,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setGrainOverride(value: GrainOverride) {
         context.dataStore.edit { it[Keys.GRAIN_OVERRIDE] = value.name }
+    }
+
+    val grainBlendMode: Flow<GrainBlendMode> = context.dataStore.data.map { prefs ->
+        prefs[Keys.GRAIN_BLEND_MODE]?.let { runCatching { GrainBlendMode.valueOf(it) }.getOrNull() }
+            ?: GrainBlendMode.FILMKORN
+    }
+
+    suspend fun setGrainBlendMode(value: GrainBlendMode) {
+        context.dataStore.edit { it[Keys.GRAIN_BLEND_MODE] = value.name }
     }
 }
 

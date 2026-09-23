@@ -75,9 +75,17 @@ object PhotoPostProcessor {
         val xfermode = dateStamp.blendMode.porterDuffMode?.let { PorterDuffXfermode(it) }
 
         // Real LED date-backs bloom into the film grain around them rather
-        // than sitting flat on top - three layered passes (a wide soft
-        // halo, a tighter glow, then the crisp glyph) get much closer to
-        // that than a single small shadow does.
+        // than sitting flat on top, and are never quite pixel-sharp either
+        // (real reference photos always show a touch of softness on the
+        // glyph edges themselves, not just a glow around them) - four
+        // layered passes (a wide soft halo, a tighter glow, then the glyph
+        // itself with a small blur of its own) get much closer to that
+        // than a single small shadow or a perfectly crisp glyph does. The
+        // radii step up roughly geometrically and the alphas step down so
+        // the three glow layers blend into one continuous falloff instead
+        // of reading as separate rings - tuned subtler than earlier drafts
+        // (lower peak alpha, wider spread) so it reads as "glow", not
+        // "smear".
         fun glowPaint(radius: Float, alpha: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = stampColor
             this.alpha = alpha
@@ -91,9 +99,9 @@ object PhotoPostProcessor {
                 val dotRadius = dotSpacing * 0.34f
                 val glyphHeight = 7 * dotSpacing
                 val lineHeight = glyphHeight * 1.5f
-                val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = stampColor; this.xfermode = xfermode }
-                val haloPaint = glowPaint(shortSide * 0.02f, 130)
-                val innerGlowPaint = glowPaint(shortSide * 0.008f, 200)
+                val dotPaint = glowPaint(dotSpacing * 0.12f, 255)
+                val haloPaint = glowPaint(shortSide * 0.024f, 90)
+                val innerGlowPaint = glowPaint(shortSide * 0.009f, 170)
 
                 var topY = if (bottomAligned) {
                     bitmap.height - margin - glyphHeight - (lines.size - 1) * lineHeight
@@ -124,9 +132,12 @@ object PhotoPostProcessor {
                     textAlign = Paint.Align.LEFT
                     color = stampColor
                     this.xfermode = xfermode
+                    // Never quite pixel-sharp, matching real date-back
+                    // reference photos - see the comment on glowPaint above.
+                    maskFilter = BlurMaskFilter(shortSide * 0.0012f, BlurMaskFilter.Blur.NORMAL)
                 }
-                val haloPaint = Paint(basePaint).apply { maskFilter = BlurMaskFilter(shortSide * 0.010f, BlurMaskFilter.Blur.NORMAL); alpha = 140 }
-                val innerGlowPaint = Paint(basePaint).apply { maskFilter = BlurMaskFilter(shortSide * 0.0035f, BlurMaskFilter.Blur.NORMAL) }
+                val haloPaint = Paint(basePaint).apply { maskFilter = BlurMaskFilter(shortSide * 0.018f, BlurMaskFilter.Blur.NORMAL); alpha = 90 }
+                val innerGlowPaint = Paint(basePaint).apply { maskFilter = BlurMaskFilter(shortSide * 0.006f, BlurMaskFilter.Blur.NORMAL); alpha = 170 }
 
                 // A real 7-segment date-back is fixed-pitch: every position
                 // (digit or separator) occupies one equally-wide cell, so

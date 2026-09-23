@@ -37,6 +37,7 @@ object ShaderSource {
         uniform float uHighlightRolloff;// 0..1
         uniform float uShadowLift;      // 0..1
         uniform float uGrainIntensity;  // 0..1
+        uniform float uGrainBlendMode;  // 0=Normal 1=Multiplizieren 2=Filmkorn 3=Leuchtend - see applyGrainBlend
         uniform float uGrainSize;       // grain particle size, in SOURCE image pixels per grain texel
         uniform float uSoftness;        // 0..1, blur radius in texel units below
         uniform float uVignette;        // 0..1
@@ -71,6 +72,44 @@ object ShaderSource {
             vec2 d = uv - 0.5;
             float dist = length(d) * 1.4;
             return 1.0 - amount * smoothstep(0.4, 1.1, dist);
+        }
+
+        // Real film grain isn't equally visible everywhere - it reads much
+        // more strongly in shadows than in highlights, the same way
+        // digital sensor noise does (weak signal, so the noise floor
+        // dominates). n is the raw bipolar grain sample (-0.5..0.5, both
+        // lighter and darker specks); amt already folds in intensity and
+        // the shader's overall 0.4 strength scale.
+        //   0 Normal:          the old flat/symmetric behavior (peaks in
+        //                      midtones, fades equally toward both black
+        //                      and white) - kept as a plain option.
+        //   1 Multiplizieren:  proportional to the base color itself, so
+        //                      grain reads *stronger* in brighter areas -
+        //                      a deliberately different, more stylized
+        //                      look, not the "realistic" one.
+        //   2 Filmkorn:        the physically-motivated default - grain
+        //                      strength scales with (1-luma), so shadows
+        //                      get full-strength grain and it fades out
+        //                      approaching white, matching real film/
+        //                      real sensor noise behavior.
+        //   3 Leuchtend:       only ever lightens (screen-style, using
+        //                      just the positive half of n) - shadows can
+        //                      light up with grain, highlights can't get
+        //                      any brighter, for a more "glowing" stylized
+        //                      look.
+        vec3 applyGrainBlend(vec3 color, float n, float amt, float mode) {
+            float luma = dot(color, vec3(0.299, 0.587, 0.114));
+            if (mode < 0.5) {
+                float visibility = clamp(1.0 - abs(luma - 0.5) * 1.3, 0.15, 1.0);
+                return color + n * amt * visibility;
+            } else if (mode < 1.5) {
+                return color * (1.0 + n * amt * 2.0);
+            } else if (mode < 2.5) {
+                return color + n * amt * 2.0 * (1.0 - luma);
+            } else {
+                float p = max(n, 0.0);
+                return 1.0 - (1.0 - color) * (1.0 - p * amt * 2.0);
+            }
         }
 
         vec3 sampleSoft(vec2 uv, float radiusTexels) {
@@ -110,9 +149,7 @@ object ShaderSource {
                 vec2 pixelPos = vTexCoord / uTexelSize;
                 vec2 grainUv = pixelPos / (max(uGrainSize, 0.3) * 256.0) + uGrainOffset;
                 float n = texture2D(sGrain, grainUv).r - 0.5;
-                float luma = dot(color, vec3(0.299, 0.587, 0.114));
-                float visibility = 1.0 - abs(luma - 0.5) * 1.3; // most visible in midtones
-                color += n * uGrainIntensity * 0.4 * clamp(visibility, 0.15, 1.0);
+                color = applyGrainBlend(color, n, uGrainIntensity * 0.4, uGrainBlendMode);
             }
 
             color *= vignetteFactor(vTexCoord, uVignette);

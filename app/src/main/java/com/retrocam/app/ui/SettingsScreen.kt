@@ -43,6 +43,7 @@ import com.retrocam.app.camera.CameraViewModel
 import com.retrocam.app.data.DateOrder
 import com.retrocam.app.data.DateSeparator
 import com.retrocam.app.data.DateStampSettings
+import com.retrocam.app.data.GrainBlendMode
 import com.retrocam.app.data.GrainOverride
 import com.retrocam.app.data.LocationStampMode
 import com.retrocam.app.data.Recipe
@@ -74,6 +75,7 @@ fun SettingsScreen(
     val shutterSound by viewModel.shutterSound.collectAsState()
     val softness by viewModel.softness.collectAsState()
     val grainOverride by viewModel.grainOverride.collectAsState()
+    val grainBlendMode by viewModel.grainBlendMode.collectAsState()
     val recipes by viewModel.recipes.collectAsState()
     val availableFps by viewModel.availableFps.collectAsState()
     val videoFps by viewModel.videoFps.collectAsState()
@@ -137,6 +139,19 @@ fun SettingsScreen(
                             selected = grainOverride == option,
                             enabled = true,
                         ) { viewModel.setGrainOverride(option) }
+                    }
+                    Text(
+                        "Mischmodus (wie in Photoshop)",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GrainBlendMode.entries.forEach { mode ->
+                            InlineChip(grainBlendModeLabel(mode), grainBlendMode == mode) {
+                                viewModel.setGrainBlendMode(mode)
+                            }
+                        }
                     }
                 }
             }
@@ -287,6 +302,13 @@ private fun optionLabel(s: ShutterSound) = when (s) {
     ShutterSound.CHUNK -> "Chunk"
 }
 
+private fun grainBlendModeLabel(m: GrainBlendMode) = when (m) {
+    GrainBlendMode.NORMAL -> "Normal"
+    GrainBlendMode.MULTIPLY -> "Multiplizieren"
+    GrainBlendMode.FILMKORN -> "Filmkorn"
+    GrainBlendMode.LEUCHTEND -> "Leuchtend"
+}
+
 private fun grainOverrideLabel(g: GrainOverride) = when (g) {
     GrainOverride.OFF -> "Aus"
     GrainOverride.STANDARD -> "Standard"
@@ -429,21 +451,28 @@ private fun StampPreview(text: String, settings: DateStampSettings) {
             .clip(RoundedCornerShape(4.dp))
             .background(Color(0xFF7A7A7A)),
     ) {
+        // Mirrors PhotoPostProcessor.burnInStamp's glow recipe (halo + inner
+        // glow + a slightly-blurred base glyph, never pixel-sharp) so the
+        // preview actually shows what the real burn-in looks like - this
+        // used to be DOT_MATRIX-only with no glow at all on 7-segment,
+        // which is exactly the "no bloom" gap that needed fixing here.
         when (settings.typeface) {
             com.retrocam.app.data.StampTypeface.DOT_MATRIX -> {
                 androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                     val nativeCanvas = drawContext.canvas.nativeCanvas
                     val spacing = 7f
                     val dotRadius = spacing * 0.34f
-                    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    fun glow(radius: Float, a: Int) = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                         color = stampColorInt
                         this.xfermode = xfermode
+                        alpha = a
+                        maskFilter = android.graphics.BlurMaskFilter(radius, android.graphics.BlurMaskFilter.Blur.NORMAL)
                     }
-                    val glow = android.graphics.Paint(paint).apply {
-                        maskFilter = android.graphics.BlurMaskFilter(spacing * 1.3f, android.graphics.BlurMaskFilter.Blur.NORMAL)
-                        alpha = 170
-                    }
-                    com.retrocam.app.camera.DotMatrixFont.draw(nativeCanvas, text, 12f, 12f, spacing, dotRadius, paint, glow)
+                    val paint = glow(spacing * 0.12f, 255)
+                    val halo = glow(spacing * 3.4f, 90)
+                    val innerGlow = glow(spacing * 1.3f, 170)
+                    com.retrocam.app.camera.DotMatrixFont.draw(nativeCanvas, text, 12f, 12f, spacing, dotRadius, paint, halo)
+                    com.retrocam.app.camera.DotMatrixFont.draw(nativeCanvas, text, 12f, 12f, spacing, dotRadius, paint, innerGlow)
                 }
             }
             else -> {
@@ -455,13 +484,24 @@ private fun StampPreview(text: String, settings: DateStampSettings) {
                 val typeface = androidx.core.content.res.ResourcesCompat.getFont(context, fontRes)
                 androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                     val nativeCanvas = drawContext.canvas.nativeCanvas
-                    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    val basePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                         this.typeface = typeface
                         textSize = 34f
                         color = stampColorInt
                         this.xfermode = xfermode
+                        maskFilter = android.graphics.BlurMaskFilter(2f, android.graphics.BlurMaskFilter.Blur.NORMAL)
                     }
-                    nativeCanvas.drawText(text, 12f, 40f, paint)
+                    val haloPaint = android.graphics.Paint(basePaint).apply {
+                        maskFilter = android.graphics.BlurMaskFilter(30f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        alpha = 90
+                    }
+                    val innerGlowPaint = android.graphics.Paint(basePaint).apply {
+                        maskFilter = android.graphics.BlurMaskFilter(10f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        alpha = 170
+                    }
+                    nativeCanvas.drawText(text, 12f, 40f, haloPaint)
+                    nativeCanvas.drawText(text, 12f, 40f, innerGlowPaint)
+                    nativeCanvas.drawText(text, 12f, 40f, basePaint)
                 }
             }
         }
