@@ -2,6 +2,14 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.6.0] - 2026-09-23
+
+### Changed
+- **Photo editor: replaced the brightness/contrast/saturation sliders with the real X100VI control set.** Now offers Film Simulation, Dynamic Range, WB Shift Red/Blue, Highlight, Shadow, Color, Sharpness, High ISO NR, Clarity, Color Chrome Effect/FX Blue, and Grain Effect/Size - the same Fuji-scale parameters and ranges as the recipe editor (see Recipe.kt for each one's manual-sourced range/mechanism), applied post-capture to any already-taken photo. Wired through the real GL shader pipeline (`PhotoLookBaker`) instead of a `ColorMatrix` approximation, since Clarity and Color Chrome Effect are local/hue-gated effects a flat color matrix can't represent. Live preview re-bakes a downscaled copy on a short debounce against rapid slider dragging; the final save bakes the full-resolution image. Verified on-device end-to-end.
+
+### Fixed
+- **No installable APK on the last four GitHub releases** (v0.4.0 - v0.5.1 had release notes but no attached binary, despite the README claiming "each with an installable APK"). Backfilled all four, and added a release/download badge to the README so this is harder to miss going forward.
+
 ## [0.5.1] - 2026-09-23
 
 ### Fixed
