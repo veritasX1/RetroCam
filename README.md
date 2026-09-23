@@ -56,9 +56,6 @@ What's been tried, in order:
 
 None of the above fully closes it — a controlled test of *purely repeated camera switches alone*, with no other interaction, still crashes occasionally. This looks like a genuine, still-live native concurrency bug in the Android camera/graphics stack under this exact architecture (a custom live GL effect pipeline + frequent camera switches), not something fixable purely at the app level. The real remaining lever is architectural: stop tearing down and rebuilding the GL/EGL/SurfaceProcessor pipeline on every camera switch. Treated as a known residual risk for now rather than something to keep patching reactively.
 
-### 8mm grain looks off
-User feedback, not yet acted on: the 8mm gauge's grain (particularly the heavy tier) reads as visually "off" compared to the other gauges — possibly the flat 3× contrast boost applied uniformly across all gauges during extraction overshoots specifically for the coarsest one. Worth revisiting with a per-gauge contrast value instead of one constant.
-
 ### OldRoll filter port (in progress)
 Porting a set of filter looks from the OldRoll app into RetroCam's recipe system, replacing/supplementing the existing Fuji-recipe-style presets — blocked on getting a look at OldRoll's actual filter list (not installed on the current test device).
 
