@@ -40,6 +40,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.retrocam.app.camera.CameraViewModel
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import com.retrocam.app.data.CinematicLook
 import com.retrocam.app.data.DateOrder
 import com.retrocam.app.data.DateSeparator
 import com.retrocam.app.data.DateStampSettings
@@ -76,6 +79,8 @@ fun SettingsScreen(
     val softness by viewModel.softness.collectAsState()
     val grainOverride by viewModel.grainOverride.collectAsState()
     val grainBlendMode by viewModel.grainBlendMode.collectAsState()
+    val cinematicLook by viewModel.cinematicLook.collectAsState()
+    val cinematicLookStrength by viewModel.cinematicLookStrength.collectAsState()
     val recipes by viewModel.recipes.collectAsState()
     val availableFps by viewModel.availableFps.collectAsState()
     val videoFps by viewModel.videoFps.collectAsState()
@@ -153,6 +158,49 @@ fun SettingsScreen(
                             }
                         }
                     }
+                }
+            }
+
+            item { SectionTitle("Cinematic Look") }
+            item {
+                Column {
+                    Text(
+                        "Ein zusätzlicher Farb-Grade (3D-LUT), unabhängig vom Rezept - kombinierbar mit jedem Foto-Rezept oder Video-Filmstock, auch mit \"Kein Filter\".",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        CinematicLook.entries.forEach { look ->
+                            InlineChip(cinematicLookLabel(look), cinematicLook == look) {
+                                viewModel.setCinematicLook(look)
+                            }
+                        }
+                    }
+                    if (cinematicLook != CinematicLook.NONE) {
+                        Column(Modifier.padding(top = 6.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Stärke", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                                Text("${(cinematicLookStrength * 100).toInt()}%", color = RetroWhite, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Slider(
+                                value = cinematicLookStrength,
+                                onValueChange = { viewModel.setCinematicLookStrength(it) },
+                                valueRange = 0f..1f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = RetroAccent,
+                                    activeTrackColor = RetroAccent,
+                                    inactiveTrackColor = Color(0x33FFFFFF),
+                                ),
+                            )
+                        }
+                    }
+                    Text(
+                        "LUTs von cinecolor.io.",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+                    )
                 }
             }
 
@@ -313,6 +361,14 @@ private fun grainOverrideLabel(g: GrainOverride) = when (g) {
     GrainOverride.OFF -> "Aus"
     GrainOverride.STANDARD -> "Standard"
     GrainOverride.HEAVY -> "Heavy"
+}
+
+private fun cinematicLookLabel(l: CinematicLook) = when (l) {
+    CinematicLook.NONE -> "Aus"
+    CinematicLook.DIGITAL_TO_FILM -> "Digital to Film"
+    CinematicLook.MODERN_35MM -> "Modern 35mm"
+    CinematicLook.VINTAGE -> "Vintage"
+    CinematicLook.BLEACH_BYPASS -> "Bleach Bypass"
 }
 
 private fun softnessLabel(s: Softness) = when (s) {

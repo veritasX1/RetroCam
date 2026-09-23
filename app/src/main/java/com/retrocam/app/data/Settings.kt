@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -52,6 +53,21 @@ enum class GrainBlendMode(val shaderValue: Float) {
     NORMAL(0f), MULTIPLY(1f), FILMKORN(2f), LEUCHTEND(3f)
 }
 
+/** A creative color-grade LUT (see RenderLook.lutKey/LutTexture), selected
+ * independently of whatever recipe/film-stock is active - orthogonal to
+ * the Fuji-recipe-style parametric looks rather than a field on Recipe
+ * itself, since these don't correspond to any real Fuji recipe field
+ * (modeled after OldRoll/8mm Vintage Camera's own separate filter-list
+ * concept, layered on top instead of baked into one fixed preset). NONE
+ * has no lutKey, and the shader skips sampling sLut entirely in that case. */
+enum class CinematicLook(val lutKey: String?) {
+    NONE(null),
+    DIGITAL_TO_FILM("digital_to_film"),
+    MODERN_35MM("modern_35mm"),
+    VINTAGE("vintage"),
+    BLEACH_BYPASS("bleach_bypass"),
+}
+
 /** Sentinel id (Room autoIncrement rows never get 0) meaning "no filter" -
  * used for both recipes and film stocks, and doubles as the value an
  * unset preference resolves to, so a fresh install defaults to unfiltered
@@ -83,6 +99,8 @@ class SettingsRepository(private val context: Context) {
         val GRAIN_OVERRIDE = stringPreferencesKey("grain_override")
         val CAPTURE_ASPECT_RATIO = stringPreferencesKey("capture_aspect_ratio")
         val GRAIN_BLEND_MODE = stringPreferencesKey("grain_blend_mode")
+        val CINEMATIC_LOOK = stringPreferencesKey("cinematic_look")
+        val CINEMATIC_LOOK_STRENGTH = floatPreferencesKey("cinematic_look_strength")
     }
 
     val shutterSound: Flow<ShutterSound> = context.dataStore.data.map { prefs ->
@@ -218,6 +236,23 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setGrainBlendMode(value: GrainBlendMode) {
         context.dataStore.edit { it[Keys.GRAIN_BLEND_MODE] = value.name }
+    }
+
+    val cinematicLook: Flow<CinematicLook> = context.dataStore.data.map { prefs ->
+        prefs[Keys.CINEMATIC_LOOK]?.let { runCatching { CinematicLook.valueOf(it) }.getOrNull() }
+            ?: CinematicLook.NONE
+    }
+
+    suspend fun setCinematicLook(value: CinematicLook) {
+        context.dataStore.edit { it[Keys.CINEMATIC_LOOK] = value.name }
+    }
+
+    val cinematicLookStrength: Flow<Float> = context.dataStore.data.map { prefs ->
+        prefs[Keys.CINEMATIC_LOOK_STRENGTH] ?: 0.65f
+    }
+
+    suspend fun setCinematicLookStrength(value: Float) {
+        context.dataStore.edit { it[Keys.CINEMATIC_LOOK_STRENGTH] = value.coerceIn(0f, 1f) }
     }
 }
 

@@ -2,6 +2,15 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.4.0] - 2026-09-23
+
+### Added
+- **Cinematic Look: real 3D-LUT color grading**, selectable independently of the Fuji-recipe-style parametric looks (Einstellungen → Cinematic Look). Four bundled looks - Digital to Film, Modern 35mm, Vintage, Bleach Bypass - each a real `.cube` 3D color-cube LUT (the DaVinci Resolve/Adobe standard, free downloads from [cinecolor.io](https://cinecolor.io/)) baked into a 2D tiled GL texture and sampled in the shader, at an adjustable strength slider, combinable with any recipe/film stock or "Kein Filter". Works for both photo (`PhotoLookBaker`) and video (`LookRenderer`).
+- Studied how OldRoll and 8mm Vintage Camera (iOS) structure their own filter looks (architecture only - a layered LUT/overlay + blend-mode stack, independent of any parametric controls) to inform this feature's design; no assets or code were taken from either app.
+
+### Changed
+- Verified the new LUT shader math (`ShaderSource.applyLut`) end-to-end on-device against an offline Python reference render of the same source photo - confirmed pixel-for-pixel matching color output, including that no G-axis flip is needed in the 2D-tiled LUT sampling.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added

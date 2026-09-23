@@ -35,6 +35,7 @@ object ShaderSource {
     private const val FRAGMENT_BODY = """
         varying vec2 vTexCoord;
         uniform sampler2D sGrain;
+        uniform sampler2D sLut;
 
         uniform float uWarmth;          // -1..1
         uniform float uSaturation;      // 0..2
@@ -48,6 +49,9 @@ object ShaderSource {
         uniform float uVignette;        // 0..1
         uniform vec2 uTexelSize;        // 1/width, 1/height of the input
         uniform vec2 uGrainOffset;      // per-frame random offset, animates the grain
+        uniform float uLutStrength;     // 0..1, 0 = LUT off entirely (sLut left unbound/unused)
+        uniform float uLutSize;         // color depth per axis, e.g. 33.0 for a 33x33x33 cube
+        uniform float uLutTilesPerRow;  // sLut is a square grid of uLutSize B-slices, e.g. 6.0 for 33 slices in a 6x6 grid
 
         vec3 applyWarmth(vec3 c, float w) {
             return c + vec3(w * 0.08, -abs(w) * 0.02, -w * 0.08);
@@ -117,6 +121,36 @@ object ShaderSource {
             }
         }
 
+        // Standard "2D-strip" 3D LUT sampling: a .cube-style 3D LUT (R/G/B
+        // each 0..uLutSize-1) baked into a square grid of 2D B-axis slices
+        // (uLutTilesPerRow x uLutTilesPerRow tiles, each uLutSize x
+        // uLutSize texels, R across, G down) - see LutTexture.kt for how
+        // sLut itself gets loaded (the PNG is pre-baked from a .cube file
+        // offline, not converted on-device). This exact technique (not any
+        // specific LUT's data) is a well-known, widely-published approach
+        // for doing 3D color-cube lookups on hardware with no native 3D
+        // texture sampling - trilinear across R/G directly via the
+        // texture's own bilinear filtering, linear across B done by hand
+        // between the two nearest slices.
+        vec3 applyLut(vec3 color) {
+            color = clamp(color, 0.0, 1.0);
+            float blue = color.b * (uLutSize - 1.0);
+            float blueFloor = floor(blue);
+            float blueCeil = min(blueFloor + 1.0, uLutSize - 1.0);
+            float blueMix = blue - blueFloor;
+
+            vec2 tile0 = vec2(mod(blueFloor, uLutTilesPerRow), floor(blueFloor / uLutTilesPerRow));
+            vec2 tile1 = vec2(mod(blueCeil, uLutTilesPerRow), floor(blueCeil / uLutTilesPerRow));
+
+            float tileFrac = 1.0 / uLutTilesPerRow;
+            float texelInTile = tileFrac / uLutSize;
+            vec2 inTileUv = color.rg * (tileFrac - texelInTile) + texelInTile * 0.5;
+
+            vec3 sample0 = texture2D(sLut, tile0 * tileFrac + inTileUv).rgb;
+            vec3 sample1 = texture2D(sLut, tile1 * tileFrac + inTileUv).rgb;
+            return mix(sample0, sample1, blueMix);
+        }
+
         vec3 sampleSoft(vec2 uv, float radiusTexels) {
             vec2 r = uTexelSize * radiusTexels;
             vec3 sum = vec3(0.0);
@@ -144,6 +178,15 @@ object ShaderSource {
             color = applyContrast(color, uContrast);
             color = applyHighlightRolloff(color, uHighlightRolloff);
             color = applyShadowLift(color, uShadowLift);
+
+            // Creative LUT grade, layered on top of the parametric look
+            // above rather than replacing it - a recipe can use either,
+            // both, or neither. Applied before grain/vignette so those
+            // still read as sitting "on top of" the final image, same as
+            // before.
+            if (uLutStrength > 0.001) {
+                color = mix(color, applyLut(color), uLutStrength);
+            }
 
             if (uGrainIntensity > 0.001) {
                 // Grain is tied to actual SOURCE pixels (not normalized 0..1
