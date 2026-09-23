@@ -3,7 +3,9 @@ package com.retrocam.app.camera
 /**
  * GLSL ES 1.00 (GLES 2.0) shaders for the single-pass "look" filter applied
  * to the live camera feed (and, via the same CameraX SurfaceProcessor, to
- * captured photos and recorded video - see RetroCamSurfaceProcessor).
+ * live preview and recorded video, via LookRenderer - see
+ * CameraViewModel.tryBind for how this shader now reaches captured
+ * photos and video too, applied once afterward instead of live).
  *
  * The fragment shader intentionally does everything in one pass rather
  * than a multi-pass pipeline: warmth/tint -> saturation -> contrast ->
@@ -23,12 +25,15 @@ object ShaderSource {
         }
     """
 
-    const val FRAGMENT = """
-        #extension GL_OES_EGL_image_external : require
-        precision mediump float;
-
+    // sTexture is declared separately per variant (samplerExternalOES for
+    // the live camera OES stream vs a plain sampler2D for the offscreen
+    // photo bake pass - see PhotoLookBaker) since GLSL ES 1.00 doesn't let
+    // one uniform declaration serve both types, but texture2D() itself
+    // calls identically either way, so the rest of the look math (this
+    // body) is shared verbatim - keeping one source of truth for what the
+    // look actually does, instead of two shaders that could drift apart.
+    private const val FRAGMENT_BODY = """
         varying vec2 vTexCoord;
-        uniform samplerExternalOES sTexture;
         uniform sampler2D sGrain;
 
         uniform float uWarmth;          // -1..1
@@ -157,4 +162,21 @@ object ShaderSource {
             gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
         }
     """
+
+    /** Live camera preview/video pass - samples the camera's OES stream. */
+    const val FRAGMENT = """
+        #extension GL_OES_EGL_image_external : require
+        precision mediump float;
+        uniform samplerExternalOES sTexture;
+    """ + FRAGMENT_BODY
+
+    /** Offscreen full-resolution photo bake pass (PhotoLookBaker) - samples
+     * a plain 2D texture uploaded from the captured JPEG instead of a live
+     * OES stream, so ImageCapture can be bound independently of the
+     * Preview/VideoCapture shared GL stream and reach the sensor's real
+     * still-capture resolution. Same look math (FRAGMENT_BODY) either way. */
+    const val FRAGMENT_PHOTO = """
+        precision mediump float;
+        uniform sampler2D sTexture;
+    """ + FRAGMENT_BODY
 }

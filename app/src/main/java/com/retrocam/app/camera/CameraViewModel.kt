@@ -6,7 +6,6 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.view.Surface
 import androidx.camera.core.Camera
-import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -25,8 +24,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
-import com.retrocam.app.camera.gl.RetroCamCameraEffect
-import com.retrocam.app.camera.gl.RetroCamSurfaceProcessor
 import com.retrocam.app.data.CaptureMode
 import com.retrocam.app.data.DateStampSettings
 import com.retrocam.app.data.FilmStockPreset
@@ -160,7 +157,6 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
     val lastCaptureIsVideo: StateFlow<Boolean> = _lastCaptureIsVideo.asStateFlow()
 
     private val currentLook = AtomicReference(RenderLook.NEUTRAL)
-    private var surfaceProcessor: RetroCamSurfaceProcessor? = null
     private var recording: Recording? = null
     private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
@@ -262,19 +258,18 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         rebindIfPossible()
     }
 
-    // Verified by inspecting the CameraX 1.4.0 bytecode
-    // (SurfaceOutputImpl): when a SurfaceProcessor effect is attached (as
-    // RetroCamSurfaceProcessor is, for PREVIEW/IMAGE_CAPTURE/VIDEO_CAPTURE
-    // all three), each SurfaceOutput's rotation-compensation matrix is
-    // computed ONCE from the use case's targetRotation at the moment
-    // onOutputSurface() fires (i.e. at bind time) and never recalculated -
-    // calling `.targetRotation = ...` on an already-bound Preview/
-    // ImageCapture/VideoCapture has no effect on the running pipeline, it
-    // only matters for a use case that hasn't been bound yet. So the only
-    // way to actually pick up a new rotation here is a rebind (same
-    // guarded path as selectCamera/setFps), which is also the only way to
-    // get correctly *swapped* output dimensions (a landscape photo needs a
-    // landscape-shaped encoder surface, not a portrait one with the pixels
+    // CameraX bakes each use case's rotation handling in at bind time
+    // (verified against CameraX 1.4.0's SurfaceOutputImpl bytecode back
+    // when this app still routed everything through a custom
+    // SurfaceProcessor effect, where this was especially strict - each
+    // SurfaceOutput's rotation-compensation matrix was computed once at
+    // onOutputSurface() and never recalculated) - calling
+    // `.targetRotation = ...` on an already-bound Preview/ImageCapture/
+    // VideoCapture doesn't retroactively affect it either way, effect or
+    // not, so a rebind (same guarded path as selectCamera/setFps) is
+    // still the only way to pick up a new rotation, and the only way to
+    // get correctly *swapped* output dimensions (a landscape photo needs
+    // a landscape-shaped capture, not a portrait one with the pixels
     // rotated inside it).
     private var lastKnownRotation: Int = Surface.ROTATION_0
 
@@ -332,26 +327,17 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
             _activeCameraKey.value = target.persistenceKey
             _availableFps.value = availableFpsFor(target.cameraInfo)
 
-            // unbindAll() first, standalone: this is what makes CameraX tell
-            // the OLD processor (via its input/output surface close
-            // callbacks) that it's safe to tear down. Only once that has
-            // actually finished do we build and attach the new use cases -
-            // building the new group and tearing down the old one at the
-            // same time used to race the camera's own capture-session
-            // teardown and crash the GL thread on a switch.
+            // unbindAll() first, standalone, still worth keeping even
+            // without a custom SurfaceProcessor to wait on anymore (see
+            // doBind's doc) - a plain, synchronous CameraX rebind (no
+            // effect attached to anything, as of this session - see
+            // tryBind) doesn't have the old effect's async GL-thread
+            // teardown race this used to specifically guard against, but
+            // unbinding before rebinding is still the standard, safest
+            // CameraX pattern regardless.
             provider.unbindAll()
-            val previous = surfaceProcessor
-            surfaceProcessor = null
-            val mainExecutor = ContextCompat.getMainExecutor(context)
-            val performBind = {
-                if (generation == rebindGeneration) {
-                    doBind(provider, lifecycleOwner, previewView, context, target)
-                }
-            }
-            if (previous != null) {
-                previous.release { mainExecutor.execute(performBind) }
-            } else {
-                performBind()
+            if (generation == rebindGeneration) {
+                doBind(provider, lifecycleOwner, previewView, context, target)
             }
         }, ContextCompat.getMainExecutor(context))
     }
@@ -377,8 +363,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
             android.util.Log.e("RetroCam", "Could not bind camera ${target.persistenceKey}, leaving previous camera active")
             return
         }
-        val (camera, processor, previewUseCase, capture, video) = bound
-        surfaceProcessor = processor
+        val (camera, previewUseCase, capture, video) = bound
         preview = previewUseCase
         imageCapture = capture
         videoCapture = video
@@ -388,7 +373,6 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
 
     private data class BindResult(
         val camera: Camera,
-        val processor: RetroCamSurfaceProcessor,
         val preview: Preview,
         val imageCapture: ImageCapture,
         val videoCapture: VideoCapture<Recorder>,
@@ -402,10 +386,12 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         target: CameraOption,
         fps: Int,
     ): BindResult? {
-        // targetRotation must be correct at build time - see
-        // updateTargetRotation's comment on why setting it after the fact
-        // on an already-bound use case has no effect through this
-        // effect-pipeline setup.
+        // No live GL effect is attached to anything bound here anymore -
+        // see the long comment below on why. targetRotation still needs
+        // to be correct at build time regardless (a rebind, not a live
+        // property update, is still how a rotation change actually takes
+        // effect - CameraX bakes each use case's rotation handling in at
+        // bind time either way, effect or not).
         val preview = Preview.Builder().apply { applyFixedFps(fps); setTargetRotation(lastKnownRotation) }.build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
@@ -417,23 +403,59 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setTargetRotation(lastKnownRotation)
             .build()
+        // HIGHEST, not FHD - raw capture should reach the best resolution
+        // the encoder/camera combination actually supports; the retro
+        // look gets baked in afterward at whatever that resolution turns
+        // out to be (VideoPostProcessor/VideoLookBaker), not live at a
+        // capped resolution like before.
         val recorder = Recorder.Builder()
-            .setQualitySelector(QualitySelector.from(Quality.FHD))
+            .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
             .build()
         val video = VideoCapture.Builder(recorder).apply { applyFixedFps(fps); setTargetRotation(lastKnownRotation) }.build()
 
-        val processor = RetroCamSurfaceProcessor(context, lookProvider = { currentLook.get() })
-        val effect = RetroCamCameraEffect(
-            CameraEffect.PREVIEW or CameraEffect.VIDEO_CAPTURE or CameraEffect.IMAGE_CAPTURE,
-            ContextCompat.getMainExecutor(context),
-            processor,
-        ) { throwable -> android.util.Log.e("RetroCam", "Effect error", throwable) }
-
+        // No CameraEffect/RetroCamSurfaceProcessor attached to Preview,
+        // ImageCapture, or VideoCapture anymore - the live GL "look"
+        // pipeline that used to intercept every frame live is gone from
+        // capture entirely. Two reasons, found together this session:
+        //  1. Measured, then root-caused: routing IMAGE_CAPTURE through
+        //     that shared live effect capped still-photo resolution well
+        //     below the sensor's real capability (3264x2448 vs the stock
+        //     camera app's 4080x3072 on this device). Confirmed via
+        //     CameraX's own SupportedOutputSizesCollector debug logging
+        //     that merely having ANY CameraEffect present in the
+        //     UseCaseGroup narrows the WHOLE session's candidate output-
+        //     size list, for every use case in the group, regardless of
+        //     which ones the effect actually targets - tried scoping the
+        //     effect down to VIDEO_CAPTURE only and Preview/ImageCapture
+        //     were still capped identically. Confirmed against the stock
+        //     camera app's own APK (org.lineageos.aperture, also CameraX-
+        //     based) that it never references CameraEffect/addEffect at
+        //     all - it reaches full resolution simply by never attaching
+        //     an effect to anything.
+        //  2. The only way to actually get that resolution back was to
+        //     drop the effect from the whole session, not just
+        //     ImageCapture - which also means Preview no longer shows a
+        //     live-graded viewfinder. Accepted deliberately (user's
+        //     framing): a real viewfinder/rangefinder camera never showed
+        //     an exact preview of the exposed film either, so this isn't
+        //     a regression from that principle, just this app actually
+        //     matching it. The look itself is baked in afterward instead,
+        //     for BOTH photo (PhotoLookBaker, since this session) and
+        //     video (VideoLookBaker, this same change) - once, offscreen,
+        //     against the real full-resolution capture, via the exact
+        //     same shader math the old live pipeline used.
+        // Bonus: this also sidesteps the whole documented camera-switch
+        // SIGSEGV crash category (see README) at its root, for normal
+        // preview/photo/video use - that crash was specifically a race in
+        // RetroCamSurfaceProcessor's own SurfaceTexture teardown on every
+        // camera switch, and there's no longer a live SurfaceProcessor
+        // whose teardown a camera switch needs to race at all. Worth
+        // confirming with real stress-testing before declaring it fixed,
+        // but the root mechanism is now simply gone from this path.
         val group = UseCaseGroup.Builder()
             .addUseCase(preview)
             .addUseCase(capture)
             .addUseCase(video)
-            .addEffect(effect)
             .build()
 
         return try {
@@ -449,10 +471,9 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 _minZoomRatio.value = state.minZoomRatio
                 _maxZoomRatio.value = state.maxZoomRatio
             }
-            BindResult(camera, processor, preview, capture, video)
+            BindResult(camera, preview, capture, video)
         } catch (t: Throwable) {
             android.util.Log.e("RetroCam", "bindToLifecycle failed for ${target.persistenceKey} at fps=$fps", t)
-            processor.release()
             // Defensive cleanup before the caller's fps=0 retry attempt -
             // bindToLifecycle throwing shouldn't leave anything bound, but
             // make sure of it rather than risk the retry stacking on top.
@@ -463,6 +484,11 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
 
     fun takePhoto(context: Context, onSaved: (Boolean) -> Unit) {
         val capture = imageCapture ?: return
+        // Snapshot now, not when the async onImageSaved callback later
+        // fires - the look actually in effect at the moment of capture is
+        // the one that should get baked in, even if the user changes
+        // recipe/settings in the brief window before the callback runs.
+        val look = currentLook.get()
         playShutterSound()
         val name = "RetroCam_${timestamp()}.jpg"
         val values = ContentValues().apply {
@@ -489,7 +515,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
                     // allowed to crash the app and take an otherwise-fine
                     // photo down with it.
                     viewModelScope.launch {
-                        runCatching { postProcessPhoto(context, uri) }
+                        runCatching { postProcessPhoto(context, uri, look) }
                             .onFailure { android.util.Log.e("RetroCam", "postProcessPhoto failed for $uri", it) }
                     }
                 }
@@ -498,7 +524,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         )
     }
 
-    private suspend fun postProcessPhoto(context: Context, uri: Uri) {
+    private suspend fun postProcessPhoto(context: Context, uri: Uri, look: RenderLook) {
         val recipeDescription = recipes.value.firstOrNull { it.id == selectedRecipeId.value }
             ?.toDescription() ?: NO_FILTER_DESCRIPTION
         val stampSettings = dateStampSettings.value
@@ -510,7 +536,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
             stampMode == LocationStampMode.POSTAL_CODE -> LocationProvider.postalCode(context, location.latitude, location.longitude)
             else -> null
         }
-        PhotoPostProcessor.process(context, uri, recipeDescription, stampSettings, locationText, location)
+        PhotoPostProcessor.process(context, uri, look, recipeDescription, stampSettings, locationText, location)
     }
 
     fun startRecording(context: Context, onStateChanged: (Boolean) -> Unit) {
@@ -520,6 +546,12 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         // IllegalStateException on a genuinely concurrent start() call.
         if (recording != null) return
         val video = videoCapture ?: return
+        // Snapshot now, same reasoning as takePhoto - the look active at
+        // the moment recording starts is what the whole clip gets baked
+        // with afterward (one consistent "film stock" per clip, not a
+        // live per-frame value that could otherwise drift if settings
+        // changed mid-recording).
+        val look = currentLook.get()
         val name = "RetroCam_${timestamp()}.mp4"
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, name)
@@ -544,8 +576,19 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
                         _recordingElapsedMs.value = 0L
                         onStateChanged(false)
                         if (event.hasError().not()) {
-                            _lastCaptureUri.value = event.outputResults.outputUri
+                            val uri = event.outputResults.outputUri
+                            _lastCaptureUri.value = uri
                             _lastCaptureIsVideo.value = true
+                            // Same non-fatal-failure principle as the photo
+                            // path: a failure here should never crash the
+                            // app or take the already-saved raw recording
+                            // down with it - VideoPostProcessor itself
+                            // never touches the original file's bytes
+                            // until a fully baked replacement exists.
+                            viewModelScope.launch {
+                                runCatching { VideoPostProcessor.process(context, uri, look) }
+                                    .onFailure { android.util.Log.e("RetroCam", "VideoPostProcessor failed for $uri", it) }
+                            }
                         }
                     }
                     else -> {}
@@ -566,7 +609,6 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
     private fun timestamp() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
 
     override fun onCleared() {
-        surfaceProcessor?.release()
         shutterSoundPlayer.release()
     }
 }

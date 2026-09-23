@@ -50,8 +50,13 @@ class EglCore {
     /** Off-screen 1x1 surface used only so a context can be current while
      * doing setup work (compiling shaders, creating textures) before any
      * real output surface exists yet. */
-    fun createOffscreenSurface(): EGLSurface {
-        val attribs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
+    fun createOffscreenSurface(): EGLSurface = createPbufferSurface(1, 1)
+
+    /** Off-screen surface at a real size, rendered into and read back via
+     * glReadPixels - used by PhotoLookBaker's full-resolution photo bake
+     * pass, which has no on-screen window surface at all. */
+    fun createPbufferSurface(width: Int, height: Int): EGLSurface {
+        val attribs = intArrayOf(EGL14.EGL_WIDTH, width, EGL14.EGL_HEIGHT, height, EGL14.EGL_NONE)
         return EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, attribs, 0)
             ?: error("Unable to create EGL pbuffer surface")
     }

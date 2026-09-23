@@ -8,14 +8,14 @@ plugins {
 
 android {
     namespace = "com.retrocam.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.retrocam.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
@@ -40,15 +40,18 @@ android {
 }
 
 dependencies {
-    // 1.4.0 -> 1.6.2: pulls in the upstream fix for "crash when effect is
+    // 1.4.0 -> 1.5.3: pulled in the upstream fix for "crash when effect is
     // being activated after SurfaceProcessor is shut down" (CameraX 1.5.1,
-    // b/414150174) - this matches this app's exact architecture (a custom
-    // CameraEffect/SurfaceProcessor torn down and rebuilt on every camera
-    // switch) and the crash signature/trigger pattern found here
-    // (SIGSEGV in libgui's ConsumerBase::abandon() via SurfaceTexture
-    // .release() on the GL thread, happening when something reactivates
-    // the pipeline shortly after a switch's teardown).
-    val cameraxVersion = "1.5.3"
+    // b/414150174), which mitigated (not fully fixed) the camera-switch
+    // SIGSEGV documented in the README - moot now that there's no custom
+    // CameraEffect/SurfaceProcessor left in this app at all (see
+    // CameraViewModel.tryBind) - kept here as history, not as a live
+    // requirement anymore.
+    // 1.5.3 -> 1.6.2: tried while investigating the photo/video resolution
+    // cap documented in the README's "Photo & video resolution" section -
+    // didn't fix that (root cause still unknown), but kept regardless as a
+    // real, worthwhile library update on its own merits.
+    val cameraxVersion = "1.6.2"
     val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
 
     implementation("androidx.core:core-ktx:1.13.1")
