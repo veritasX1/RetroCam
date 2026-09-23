@@ -475,7 +475,16 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
                     val uri = output.savedUri ?: return
                     _lastCaptureUri.value = uri
                     _lastCaptureIsVideo.value = false
-                    viewModelScope.launch { postProcessPhoto(context, uri) }
+                    // The photo file itself is already safely saved by
+                    // ImageCapture at this point (onImageSaved already
+                    // fired) - this is just the optional stamp/EXIF pass
+                    // on top of it, so a failure here should never be
+                    // allowed to crash the app and take an otherwise-fine
+                    // photo down with it.
+                    viewModelScope.launch {
+                        runCatching { postProcessPhoto(context, uri) }
+                            .onFailure { android.util.Log.e("RetroCam", "postProcessPhoto failed for $uri", it) }
+                    }
                 }
                 override fun onError(exception: ImageCaptureException) = onSaved(false)
             },
