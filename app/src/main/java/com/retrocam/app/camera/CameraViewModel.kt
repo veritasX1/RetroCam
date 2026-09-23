@@ -11,6 +11,8 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
@@ -140,6 +142,12 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
     val availableCameras: StateFlow<List<CameraOption>> = _availableCameras.asStateFlow()
     private val _activeCameraKey = MutableStateFlow<String?>(null)
     val activeCameraKey: StateFlow<String?> = _activeCameraKey.asStateFlow()
+    // Same reason as _activeCameraKey vs persistedCameraKey below: tryBind
+    // needs to know the JUST-selected mode synchronously, not wait for a
+    // DataStore round-trip through `mode` (settings.captureMode.eager(...))
+    // to catch up - selectMode() sets this immediately, before the
+    // rebind it triggers even starts.
+    private val _activeMode = MutableStateFlow<CaptureMode?>(null)
 
     private val _availableFps = MutableStateFlow<List<Int>>(emptyList())
     val availableFps: StateFlow<List<Int>> = _availableFps.asStateFlow()
@@ -218,7 +226,17 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
 
     fun setGrainBlendMode(value: GrainBlendMode) { viewModelScope.launch { settings.setGrainBlendMode(value) } }
 
-    fun selectMode(m: CaptureMode) { viewModelScope.launch { settings.setCaptureMode(m) } }
+    // Now requires a rebind (see tryBind's ViewPort/UseCaseGroup comment -
+    // only one of ImageCapture/VideoCapture is ever bound at a time), so
+    // this needs the same guards selectCamera already uses: can't tear
+    // down the pipeline a live Recording's encoder surface depends on,
+    // and can't stack a second rebind on one still settling.
+    fun selectMode(m: CaptureMode) {
+        if (recording != null || uiLockedAfterRebind.value || m == mode.value) return
+        _activeMode.value = m
+        viewModelScope.launch { settings.setCaptureMode(m) }
+        rebindIfPossible()
+    }
 
     // Recipe/film-stock switching never touches the camera binding or its
     // GL surfaces - it only changes which look is read on the next frame -
@@ -374,8 +392,8 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
     private data class BindResult(
         val camera: Camera,
         val preview: Preview,
-        val imageCapture: ImageCapture,
-        val videoCapture: VideoCapture<Recorder>,
+        val imageCapture: ImageCapture?,
+        val videoCapture: VideoCapture<Recorder>?,
     )
 
     private fun tryBind(
@@ -392,26 +410,68 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         // property update, is still how a rotation change actually takes
         // effect - CameraX bakes each use case's rotation handling in at
         // bind time either way, effect or not).
-        val preview = Preview.Builder().apply { applyFixedFps(fps); setTargetRotation(lastKnownRotation) }.build().also {
-            it.setSurfaceProvider(previewView.surfaceProvider)
-        }
+        // Preview deliberately targets the SCREEN's own aspect ratio, not
+        // whichever capture use case is active (4:3 photo / 16:9 video) -
+        // a real, user-reported bug found this session: with no explicit
+        // aspect ratio, CameraX's default resolution selection pulled
+        // Preview toward matching ImageCapture's 4:3 (confirmed via
+        // `dumpsys media.camera`'s active streams: Preview's own stream
+        // negotiated as 1600x1200, exactly 4:3) - but PreviewView/
+        // SurfaceView fills the FULL, much wider ~2.22:1 landscape screen,
+        // so center-crop scaling to fill that mismatched shape cropped
+        // away roughly 40% of the vertical FOV, which is exactly what
+        // read as the live viewfinder being "zoomed in" compared to the
+        // stock camera app from the same physical position. Preview
+        // showing a wider FOV than the final 4:3 photo or 16:9 video
+        // actually keeps is normal, expected camera-app behavior, not a
+        // new inconsistency - deliberately NOT using a shared ViewPort
+        // here for exactly that reason (a ViewPort would force Preview
+        // back into the capture use case's own crop, reintroducing this).
+        // AspectRatioStrategy only accepts the two AspectRatio buckets
+        // (4:3 / 16:9), not an arbitrary Rational matching the screen's
+        // own (much wider, ~20:9) proportions exactly - 16:9 is by far
+        // the closer of the two, and this is a normal camera-app tradeoff
+        // regardless (the viewfinder showing a bit more FOV than the
+        // final 4:3 photo/16:9 video actually keeps).
+        val preview = Preview.Builder()
+            .apply { applyFixedFps(fps); setTargetRotation(lastKnownRotation) }
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                    .build()
+            )
+            .build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+        // Only the use case matching the CURRENT mode (photo vs video) is
+        // ever built and bound - see the ViewPort/UseCaseGroup comment
+        // below for why. Whichever one isn't active this bind is simply
+        // null; takePhoto()/startRecording() already no-op safely if
+        // called with nothing bound (can't happen in practice - the
+        // shutter button itself already dispatches based on the same
+        // mode, see CameraScreen's ShutterButton).
+        val currentMode = _activeMode.value ?: mode.value
         // MINIMIZE_LATENCY (CameraX's default) trades quality for speed -
         // fine for a burst-shooting app, wrong for one whose whole point
         // is the photo looking as good as the sensor can produce before
         // the retro look is even applied.
-        val capture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setTargetRotation(lastKnownRotation)
-            .build()
+        val capture = if (currentMode == CaptureMode.PHOTO) {
+            ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                .setTargetRotation(lastKnownRotation)
+                .build()
+        } else null
         // HIGHEST, not FHD - raw capture should reach the best resolution
         // the encoder/camera combination actually supports; the retro
         // look gets baked in afterward at whatever that resolution turns
         // out to be (VideoPostProcessor/VideoLookBaker), not live at a
         // capped resolution like before.
-        val recorder = Recorder.Builder()
-            .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
-            .build()
-        val video = VideoCapture.Builder(recorder).apply { applyFixedFps(fps); setTargetRotation(lastKnownRotation) }.build()
+        val video = if (currentMode == CaptureMode.VIDEO) {
+            val recorder = Recorder.Builder()
+                .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+                .build()
+            VideoCapture.Builder(recorder).apply { applyFixedFps(fps); setTargetRotation(lastKnownRotation) }.build()
+        } else null
 
         // No CameraEffect/RetroCamSurfaceProcessor attached to Preview,
         // ImageCapture, or VideoCapture anymore - the live GL "look"
@@ -452,11 +512,22 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         // whose teardown a camera switch needs to race at all. Worth
         // confirming with real stress-testing before declaring it fixed,
         // but the root mechanism is now simply gone from this path.
-        val group = UseCaseGroup.Builder()
+        //
+        // Only ONE of ImageCapture/VideoCapture is ever bound at once (see
+        // currentMode above) - matches how a stock camera app behaves
+        // (switching photo/video re-binds, rather than keeping every use
+        // case live simultaneously), and keeps the resolution/candidate-
+        // size negotiation for the active capture type as unconstrained
+        // as possible by not sharing a session with the other capture
+        // type's own requirements. No shared ViewPort - see Preview's own
+        // ResolutionSelector comment above for why: a ViewPort would force
+        // Preview's crop to match the capture use case's own aspect
+        // ratio, which is the exact bug that comment describes.
+        val groupBuilder = UseCaseGroup.Builder()
             .addUseCase(preview)
-            .addUseCase(capture)
-            .addUseCase(video)
-            .build()
+        capture?.let { groupBuilder.addUseCase(it) }
+        video?.let { groupBuilder.addUseCase(it) }
+        val group = groupBuilder.build()
 
         return try {
             val camera = provider.bindToLifecycle(lifecycleOwner, target.toSelector(), group)

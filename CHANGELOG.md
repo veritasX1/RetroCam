@@ -2,6 +2,16 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.2.1] - 2026-09-23
+
+### Fixed
+- **Live viewfinder was visibly "zoomed in"** compared to the stock camera app - `Preview` was being pulled into a 4:3 stream (matching `ImageCapture`'s own aspect) by CameraX's default resolution selection, then center-crop-scaled to fill the much wider landscape screen, cropping away roughly 40% of the vertical field of view. Fixed by giving `Preview` its own explicit 16:9-targeted resolution selector, decoupled from whichever capture type is active.
+- Reworked camera binding so only one of `ImageCapture`/`VideoCapture` is ever bound at a time, matching the active photo/video mode (switching modes now triggers a quick rebind) - closer to how a stock camera app behaves, and removes a class of aspect-ratio mismatch between all three use cases being bound together at once.
+- Investigated a "grain isn't applied to video anymore" report and found it was a Settings state (the global Filmkorn/grain override was set to "Aus"), not a code bug - confirmed grain renders correctly on video once set to Standard/Heavy.
+
+### Investigated, not fixed
+- The photo/video resolution cap (see README) - ruled out several more possible causes this round, including confirming directly via the camera's own `CameraCharacteristics` that the missing resolution genuinely is available at the Camera2/HAL level for the exact camera this app uses, and confirming the stock camera app's alternate CameraX backend (`camera-camera2-pipe`) isn't currently possible to adopt here - its CameraX-facing integration layer isn't published to the public Maven repo. Still open.
+
 ## [0.2.0] - 2026-09-23
 
 ### Changed — architecture rework: look is baked in after capture, not live
