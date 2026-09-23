@@ -1,6 +1,8 @@
 package com.retrocam.app.ui
 
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.camera.view.PreviewView
@@ -62,7 +64,7 @@ private val NO_FILTER_RECIPE = Recipe(id = NO_FILTER_ID, name = NO_FILTER_LABEL)
 private val NO_FILTER_FILM_STOCK = FilmStockPreset(id = NO_FILTER_ID, name = NO_FILTER_LABEL, gauge = "")
 
 @Composable
-fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit) {
+fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit, onOpenPhotoEditor: (Uri) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -187,6 +189,24 @@ fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit) {
                 }
             }
         }
+        // Photos open the in-app editor; videos aren't editable there, so
+        // they still fall back to the system player like before.
+        val onThumbnailClick: () -> Unit = onThumbnailClick@{
+            val uri = lastCaptureUri ?: return@onThumbnailClick
+            if (!lastCaptureIsVideo) {
+                onOpenPhotoEditor(uri)
+                return@onThumbnailClick
+            }
+            try {
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "video/*")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(intent)
+            } catch (t: Throwable) {
+                android.util.Log.e("RetroCam", "Could not open last capture", t)
+            }
+        }
         val modeLabels: @Composable () -> Unit = {
             ModeLabel("PHOTO", mode == CaptureMode.PHOTO) { viewModel.selectMode(CaptureMode.PHOTO) }
             androidx.compose.foundation.layout.Spacer(Modifier.size(16.dp))
@@ -202,6 +222,7 @@ fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit) {
                     uri = uri,
                     isVideo = lastCaptureIsVideo,
                     modifier = Modifier.align(Alignment.TopStart),
+                    onClick = onThumbnailClick,
                 )
             }
             ShutterButton(
@@ -281,6 +302,7 @@ fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit) {
                             uri = uri,
                             isVideo = lastCaptureIsVideo,
                             modifier = Modifier.align(Alignment.Center).offset(y = 158.dp),
+                            onClick = onThumbnailClick,
                         )
                     }
                 }

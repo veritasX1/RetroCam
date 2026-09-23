@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import android.net.Uri
 import com.retrocam.app.camera.CameraViewModel
 import com.retrocam.app.data.Recipe
 
@@ -16,6 +17,7 @@ private sealed interface Screen {
     data object Camera : Screen
     data object Settings : Screen
     data class EditRecipe(val recipe: Recipe?) : Screen
+    data class EditPhoto(val uri: Uri) : Screen
 }
 
 @Composable
@@ -29,6 +31,7 @@ fun RetroCamRoot(viewModel: CameraViewModel) {
     BackHandler(enabled = screen !is Screen.Camera) {
         screen = when (screen) {
             is Screen.EditRecipe -> Screen.Settings
+            is Screen.EditPhoto -> Screen.Camera
             is Screen.Settings -> Screen.Camera
             is Screen.Camera -> Screen.Camera
         }
@@ -46,6 +49,7 @@ fun RetroCamRoot(viewModel: CameraViewModel) {
         CameraScreen(
             viewModel = viewModel,
             onOpenSettings = { screen = Screen.Settings },
+            onOpenPhotoEditor = { uri -> screen = Screen.EditPhoto(uri) },
         )
         when (val s = screen) {
             is Screen.Camera -> Unit
@@ -58,6 +62,10 @@ fun RetroCamRoot(viewModel: CameraViewModel) {
             is Screen.EditRecipe -> RecipeEditorScreen(
                 existing = s.recipe,
                 onDone = { screen = Screen.Settings },
+            )
+            is Screen.EditPhoto -> PhotoEditorScreen(
+                uri = s.uri,
+                onDone = { screen = Screen.Camera },
             )
         }
     }

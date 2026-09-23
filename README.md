@@ -32,6 +32,9 @@ A single torch toggle (not per-shot flash) that works the same way for photo and
 ### Live rotation handling
 The camera preview and captures track the phone's actual physical orientation (via a raw sensor listener, not just Configuration's coarse portrait/landscape), rebinding the camera pipeline as needed so photos and video come out in the orientation the phone was actually held in.
 
+### Lightweight in-app photo editor
+Tapping the last-capture thumbnail (for a photo, not a video) opens a small iOS-Photos-style editor instead of the system viewer: 90° rotate, a draggable/resizable crop rect with aspect-ratio presets (Frei/1:1/4:5/3:4/16:9), and brightness/contrast/saturation sliders with a live preview, saved back over the same file. Not a general editor - no layers, no undo history, just the handful of corrections people actually reach for right after a shot (cancel out and reopen to start over).
+
 ## Architecture
 
 - **CameraX** (`androidx.camera`) for camera lifecycle/use-case management (Preview, ImageCapture, VideoCapture).
@@ -58,9 +61,6 @@ None of the above fully closes it — a controlled test of *purely repeated came
 
 ### OldRoll filter port (in progress)
 Porting a set of filter looks from the OldRoll app into RetroCam's recipe system, replacing/supplementing the existing Fuji-recipe-style presets — blocked on getting a look at OldRoll's actual filter list (not installed on the current test device).
-
-### Nice-to-have, not started
-A lightweight iOS-Photos-style basic image editor, opened from tapping the last-capture thumbnail.
 
 ## Asset licensing note
 
