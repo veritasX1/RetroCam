@@ -2,6 +2,15 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.5.0] - 2026-09-23
+
+### Changed
+- **Recipe controls grounded in Fujifilm's own X100VI manual** instead of assumptions. Two real mechanism fixes: **Clarity** (manual: "increase definition while altering tones in highlights and shadows as little as possible", -5..+5) was previously just folded into the same blur-radius reduction as Sharpness - it's actually local/midtone contrast, now its own shader pass (`ShaderSource.applyClarity`). **Color Chrome Effect/FX Blue** (manual: "increase the range of tones available for rendering colors that tend to be highly saturated, such as reds, yellows, and greens" / "...for rendering blues") was a flat saturation/contrast/warmth nudge - now a real chroma-and-hue-gated local contrast boost (`ShaderSource.applyColorChrome`), only affecting pixels that are actually saturated and in the matching red/yellow/green or blue hue band.
+- Fixed a matching bug in `FilmSimulationBase.forName`: `"Acros+R Filter".contains("acros")` meant the generic Acros entry (declared first) always won over the more specific Acros+R, silently discarding every Acros/Monochrome filter variant's tuning. Now resolves to the longest matching term across all entries.
+- Added a real **Monochrome** film simulation base (previously folded into Acros despite being a materially flatter, separate simulation) plus its Ye/R/G filter variants.
+- Nudged Velvia/Pro Neg Hi/Pro Neg Std/Reala Ace base contrast and warmth to better match their described character (Velvia noticeably more contrasty, Reala Ace's "hard tonality", Pro Neg's warmer-than-Classic-Chrome cast).
+- Documented every recipe field's real Fuji numeric range/mechanism inline in `Recipe.kt`.
+
 ## [0.4.1] - 2026-09-23
 
 ### Fixed
