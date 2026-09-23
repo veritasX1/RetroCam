@@ -189,9 +189,11 @@ private fun Field(label: String, value: String, singleLine: Boolean = true, onCh
  * whole numbers, since most of these fields are conceptually integers
  * even where stored as Float) alongside a Slider snapped to [steps] even
  * increments across [range] - e.g. steps=17 across -9f..9f gives whole-
- * integer stops, matching Fuji's own -9..9 WB shift granularity. */
+ * integer stops, matching Fuji's own -9..9 WB shift granularity. Not
+ * private - PhotoEditorScreen reuses this for the same Fuji-scale
+ * controls applied post-capture instead of to a saved Recipe. */
 @Composable
-private fun SliderField(label: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int, onChange: (Float) -> Unit) {
+fun SliderField(label: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int, onChange: (Float) -> Unit) {
     Column(Modifier.padding(vertical = 6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
@@ -212,8 +214,9 @@ private fun SliderField(label: String, value: Float, range: ClosedFloatingPointR
     }
 }
 
+/** Not private - see SliderField's doc, same reuse reason. */
 @Composable
-private fun <T> EnumRow(label: String, options: List<T>, selected: T, name: (T) -> String, onSelect: (T) -> Unit) {
+fun <T> EnumRow(label: String, options: List<T>, selected: T, name: (T) -> String, onSelect: (T) -> Unit) {
     Column(Modifier.padding(vertical = 6.dp)) {
         Text(label, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
         Row(

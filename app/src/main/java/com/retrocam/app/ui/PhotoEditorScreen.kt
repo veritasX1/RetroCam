@@ -21,13 +21,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -36,8 +39,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,8 +55,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -65,9 +64,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import com.retrocam.app.camera.gl.PhotoLookBaker
+import com.retrocam.app.data.DYNAMIC_RANGE_OPTIONS
+import com.retrocam.app.data.EffectStrength
+import com.retrocam.app.data.FilmSimulationBase
+import com.retrocam.app.data.GrainSize
+import com.retrocam.app.data.GrainStrength
+import com.retrocam.app.data.Recipe
+import com.retrocam.app.data.toRenderLook
 import com.retrocam.app.ui.theme.RetroAccent
 import com.retrocam.app.ui.theme.RetroWhite
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -83,15 +91,32 @@ private val ASPECT_PRESETS = listOf(
     AspectPreset("16:9", 16f / 9f),
 )
 
+// Debounces the live-preview re-bake against rapid slider dragging - a
+// GL bake isn't free, so this waits for the value to actually settle
+// rather than re-baking on every intermediate drag tick. Compose's
+// LaunchedEffect(recipe) naturally cancels/restarts this delay on every
+// change, so a continuous drag never gets past this line until it pauses.
+private const val PREVIEW_DEBOUNCE_MS = 120L
+
+// The live preview bakes a downscaled copy instead of the full-resolution
+// capture - a GL pass's cost scales with pixel count, and nobody can tell
+// the difference on a phone screen at this size anyway. The FINAL save
+// still bakes the real, full-resolution bitmap (see save()).
+private const val PREVIEW_MAX_DIMENSION = 1000
+
 /**
  * A lightweight, iOS-Photos-style editor for a single already-captured
  * photo: rotate, a draggable/resizable crop rect with a few aspect-ratio
- * presets, and brightness/contrast/saturation sliders. Not trying to be a
- * full editor - no layers, no undo history beyond "start over", no
- * healing/retouch - just the handful of corrections people actually reach
- * for right after a shot. Saves by overwriting the same MediaStore URI the
- * photo was already saved at, matching how PhotoPostProcessor's date-stamp
- * burn-in already treats capture as "the file", not an immutable original.
+ * presets, and the same Fuji-recipe-style tone/color controls the X100VI
+ * manual describes (White Balance shift, Highlight/Shadow tone, Color,
+ * Sharpness, High ISO NR, Clarity, Color Chrome Effect/FX Blue, Grain
+ * Effect, Dynamic Range, Film Simulation) - applied via the real GL
+ * shader pipeline (PhotoLookBaker), not a cheap ColorMatrix
+ * approximation, since Clarity/Color Chrome are local/hue-gated effects
+ * a flat color matrix can't represent. Saves by overwriting the same
+ * MediaStore URI the photo was already saved at, matching how
+ * PhotoPostProcessor's date-stamp burn-in already treats capture as "the
+ * file", not an immutable original.
  */
 @Composable
 fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
@@ -108,9 +133,50 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
     var cropRect by remember { mutableStateOf<Rect?>(null) }
     var selectedPresetLabel by remember { mutableStateOf(ASPECT_PRESETS[0].label) }
 
-    var brightness by remember { mutableStateOf(0f) } // -1..1
-    var contrast by remember { mutableStateOf(0f) } // -1..1
-    var saturation by remember { mutableStateOf(0f) } // -1..1
+    // Same Fuji-scale fields/ranges as RecipeEditorScreen (see Recipe.kt
+    // for each one's real numeric range and manual-sourced mechanism) -
+    // starts neutral regardless of whatever recipe the photo was
+    // originally shot with, the same way a real photo editor lets you
+    // grade on top of an already-graded JPEG rather than recalling the
+    // camera's in-the-moment settings.
+    var filmSimulation by remember { mutableStateOf("Provia/Standard") }
+    var dynamicRange by remember { mutableStateOf("DR100") }
+    var grainStrength by remember { mutableStateOf(GrainStrength.OFF) }
+    var grainSize by remember { mutableStateOf(GrainSize.SMALL) }
+    var colorChromeEffect by remember { mutableStateOf(EffectStrength.OFF) }
+    var colorChromeFxBlue by remember { mutableStateOf(EffectStrength.OFF) }
+    var wbShiftRed by remember { mutableStateOf(0f) }
+    var wbShiftBlue by remember { mutableStateOf(0f) }
+    var highlight by remember { mutableStateOf(0f) }
+    var shadow by remember { mutableStateOf(0f) }
+    var color by remember { mutableStateOf(0f) }
+    var sharpness by remember { mutableStateOf(0f) }
+    var highIsoNr by remember { mutableStateOf(0f) }
+    var clarity by remember { mutableStateOf(0f) }
+
+    // A plain in-memory Recipe (never persisted/inserted into the DB) -
+    // reuses Recipe.toRenderLook()'s exact mapping instead of duplicating
+    // it, and its structural equality is what LaunchedEffect below keys
+    // the debounced re-bake on.
+    val editRecipe = Recipe(
+        name = "",
+        filmSimulation = filmSimulation,
+        dynamicRange = dynamicRange,
+        grainStrength = grainStrength,
+        grainSize = grainSize,
+        colorChromeEffect = colorChromeEffect,
+        colorChromeFxBlue = colorChromeFxBlue,
+        wbShiftRed = wbShiftRed.roundToInt(),
+        wbShiftBlue = wbShiftBlue.roundToInt(),
+        highlight = highlight,
+        shadow = shadow,
+        color = color.roundToInt(),
+        sharpness = sharpness.roundToInt(),
+        highIsoNr = highIsoNr.roundToInt(),
+        clarity = clarity.roundToInt(),
+    )
+
+    var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(uri) {
         isLoading = true
@@ -128,20 +194,15 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
         if (box != null) cropRect = Rect(Offset.Zero, box)
     }
 
-    fun colorMatrix(): ColorMatrix {
-        val c = 1f + contrast
-        val b = brightness * 255f
-        val t = (1f - c) * 127.5f + b
-        val contrastBrightness = ColorMatrix(
-            floatArrayOf(
-                c, 0f, 0f, 0f, t,
-                0f, c, 0f, 0f, t,
-                0f, 0f, c, 0f, t,
-                0f, 0f, 0f, 1f, 0f,
-            ),
-        )
-        val sat = ColorMatrix().apply { setToSaturation(1f + saturation) }
-        return concatColorMatrices(contrastBrightness, sat)
+    // Downscaled once per working bitmap (crop/rotate), then re-baked
+    // cheaply on every parameter tweak - see PREVIEW_MAX_DIMENSION.
+    val previewSource = remember(workingBitmap) { workingBitmap?.let { downscale(it, PREVIEW_MAX_DIMENSION) } }
+
+    LaunchedEffect(editRecipe, previewSource) {
+        val source = previewSource ?: return@LaunchedEffect
+        delay(PREVIEW_DEBOUNCE_MS)
+        val look = editRecipe.toRenderLook()
+        previewBitmap = withContext(Dispatchers.Default) { PhotoLookBaker.bake(context, source, look) }
     }
 
     fun rotate90() {
@@ -181,19 +242,14 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
     fun save() {
         val bmp = workingBitmap ?: return
         isSaving = true
-        val matrixValues = colorMatrix().values
+        val look = editRecipe.toRenderLook()
         scope.launch {
-            withContext(Dispatchers.IO) {
-                val output = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(output)
-                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                    colorFilter = android.graphics.ColorMatrixColorFilter(matrixValues)
-                }
-                canvas.drawBitmap(bmp, 0f, 0f, paint)
+            withContext(Dispatchers.Default) {
+                val baked = PhotoLookBaker.bake(context, bmp, look)
                 context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                    output.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                    baked.compress(Bitmap.CompressFormat.JPEG, 92, out)
                 }
-                output.recycle()
+                baked.recycle()
             }
             isSaving = false
             onDone()
@@ -237,9 +293,35 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
                 }
             }
         } else {
-            AdjustSlider("Helligkeit", brightness) { brightness = it }
-            AdjustSlider("Kontrast", contrast) { contrast = it }
-            AdjustSlider("Sättigung", saturation) { saturation = it }
+            // The full Fuji "picture quality" control set from the X100VI
+            // manual (see Recipe.kt for each field's real range/mechanism)
+            // - scrollable since it's a lot more than three sliders now,
+            // weight(1f) bounds it against whatever height the container
+            // this lambda is placed in actually has (see the two call
+            // sites below).
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            ) {
+                EnumRow(
+                    "Film Simulation",
+                    FilmSimulationBase.entries.map { it.displayName },
+                    filmSimulation,
+                    { it },
+                ) { filmSimulation = it }
+                EnumRow("Dynamic Range", DYNAMIC_RANGE_OPTIONS, dynamicRange, { it }) { dynamicRange = it }
+                SliderField("WB Shift Red", wbShiftRed, -9f..9f, steps = 17) { wbShiftRed = it }
+                SliderField("WB Shift Blue", wbShiftBlue, -9f..9f, steps = 17) { wbShiftBlue = it }
+                SliderField("Highlight", highlight, -2f..4f, steps = 11) { highlight = it }
+                SliderField("Shadow", shadow, -2f..4f, steps = 11) { shadow = it }
+                SliderField("Color", color, -4f..4f, steps = 7) { color = it }
+                SliderField("Sharpness", sharpness, -4f..4f, steps = 7) { sharpness = it }
+                SliderField("High ISO NR", highIsoNr, -4f..4f, steps = 7) { highIsoNr = it }
+                SliderField("Clarity", clarity, -5f..5f, steps = 9) { clarity = it }
+                EnumRow("Color Chrome Effect", EffectStrength.entries, colorChromeEffect, { it.name }) { colorChromeEffect = it }
+                EnumRow("Color Chrome FX Blue", EffectStrength.entries, colorChromeFxBlue, { it.name }) { colorChromeFxBlue = it }
+                EnumRow("Grain Effect", GrainStrength.entries, grainStrength, { it.name }) { grainStrength = it }
+                EnumRow("Grain Size", GrainSize.entries, grainSize, { it.name }) { grainSize = it }
+            }
         }
     }
 
@@ -277,11 +359,15 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
                     .systemGestureExclusion()
                     .onSizeChanged { imageBoxSizePx = it.toSize() },
             ) {
+                // previewBitmap is the GL-baked look preview (see the
+                // debounced LaunchedEffect above) - falls back to the
+                // plain downscaled/original bitmap for the brief window
+                // before the first bake completes, so the image never
+                // flashes blank.
                 Image(
-                    bmp.asImageBitmap(),
+                    (previewBitmap ?: previewSource ?: bmp).asImageBitmap(),
                     contentDescription = "Foto",
                     modifier = Modifier.fillMaxSize(),
-                    colorFilter = ColorFilter.colorMatrix(colorMatrix()),
                 )
                 val rect = cropRect
                 if (mode == EditorMode.CROP && rect != null) {
@@ -318,10 +404,10 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
             // Controls move to a fixed-width sidebar on the right instead
             // of stacking below the image - on a landscape screen the
             // available height is short, so reserving a chunk of it for
-            // three sliders + mode row (as the portrait layout does)
-            // squeezed the image down to a sliver. Side-by-side instead
-            // gives the image the full height and the sliders a properly
-            // sized, non-cramped column.
+            // the full control set (as the portrait layout does, capped
+            // instead) squeezed the image down to a sliver. Side-by-side
+            // instead gives the image the full height and the controls a
+            // properly sized, scrollable column.
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 BoxWithConstraints(
                     Modifier.weight(1f).fillMaxHeight().padding(16.dp),
@@ -329,8 +415,7 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
                     content = imageContent,
                 )
                 Column(
-                    Modifier.width(300.dp).fillMaxHeight().padding(top = 8.dp, bottom = 16.dp),
-                    verticalArrangement = Arrangement.Center,
+                    Modifier.width(320.dp).fillMaxHeight().padding(top = 8.dp, bottom = 16.dp),
                     content = controlsContent,
                 )
             }
@@ -340,9 +425,20 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
                 contentAlignment = Alignment.Center,
                 content = imageContent,
             )
-            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp, top = 8.dp), content = controlsContent)
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 340.dp).padding(bottom = 24.dp, top = 8.dp),
+                content = controlsContent,
+            )
         }
     }
+}
+
+private fun downscale(bitmap: Bitmap, maxDimension: Int): Bitmap {
+    val scale = maxDimension.toFloat() / maxOf(bitmap.width, bitmap.height)
+    if (scale >= 1f) return bitmap
+    val w = (bitmap.width * scale).roundToInt().coerceAtLeast(1)
+    val h = (bitmap.height * scale).roundToInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(bitmap, w, h, true)
 }
 
 @Composable
@@ -365,19 +461,6 @@ private fun AspectChip(label: String, selected: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(label, color = if (selected) Color.Black else RetroWhite, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-private fun AdjustSlider(label: String, value: Float, onChange: (Float) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Text(label, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            valueRange = -1f..1f,
-            colors = SliderDefaults.colors(thumbColor = RetroAccent, activeTrackColor = RetroAccent),
-        )
     }
 }
 
@@ -467,25 +550,4 @@ private fun CropHandle(center: Offset, sizePx: Float, onDrag: (Offset) -> Unit) 
                 }
             },
     )
-}
-
-/** Concatenates two 4x5 RGBA color matrices (both this app's and platform
- * android.graphics.ColorMatrix use this row-major format with an implicit
- * fixed last row) so [first] is applied before [second] in a single pass -
- * needed because Compose's Image only takes one ColorFilter. */
-private fun concatColorMatrices(first: ColorMatrix, second: ColorMatrix): ColorMatrix {
-    val a = second.values
-    val b = first.values
-    val result = FloatArray(20)
-    for (i in 0 until 4) {
-        for (j in 0 until 5) {
-            var sum = 0f
-            for (k in 0 until 4) {
-                sum += a[i * 5 + k] * b[k * 5 + j]
-            }
-            if (j == 4) sum += a[i * 5 + 4]
-            result[i * 5 + j] = sum
-        }
-    }
-    return ColorMatrix(result)
 }

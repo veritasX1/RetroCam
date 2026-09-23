@@ -1,5 +1,7 @@
 # RetroCam
 
+[![Latest release](https://img.shields.io/github/v/release/veritasX1/RetroCam?label=latest%20release)](https://github.com/veritasX1/RetroCam/releases/latest) [![Download APK](https://img.shields.io/badge/download-APK-brightgreen)](https://github.com/veritasX1/RetroCam/releases/latest)
+
 An Android camera app that renders a real film look into every photo and video — applied once, right after capture, against the camera's own full-resolution output, the same way a real viewfinder camera's optical finder never showed you the exact exposed film either.
 
 **Releases & version history:** [GitHub Releases](https://github.com/veritasX1/RetroCam/releases) (each with an installable APK) · [CHANGELOG.md](CHANGELOG.md) for the same history in one place.
