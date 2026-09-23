@@ -1,6 +1,5 @@
 package com.retrocam.app.ui
 
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -29,11 +28,12 @@ import kotlinx.coroutines.withContext
 /**
  * Small "what did I just shoot" preview in the corner of the viewfinder -
  * without it there's no way to tell whether the last shot came out okay
- * without leaving the camera. Tapping it opens the system viewer/gallery
- * for that photo or video.
+ * without leaving the camera. Tapping a photo opens the in-app editor
+ * ([onClick]); videos aren't editable here, so the caller wires that tap
+ * to the system player instead - see CameraScreen.
  */
 @Composable
-fun LastCaptureThumbnail(uri: Uri, isVideo: Boolean, modifier: Modifier = Modifier) {
+fun LastCaptureThumbnail(uri: Uri, isVideo: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(initialValue = null, uri) {
         value = withContext(Dispatchers.IO) {
@@ -48,17 +48,7 @@ fun LastCaptureThumbnail(uri: Uri, isVideo: Boolean, modifier: Modifier = Modifi
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0x33FFFFFF))
             .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(8.dp))
-            .clickable {
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, if (isVideo) "video/*" else "image/*")
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(intent)
-                } catch (t: Throwable) {
-                    android.util.Log.e("RetroCam", "Could not open last capture", t)
-                }
-            },
+            .clickable(onClick = onClick),
     ) {
         if (bmp != null) {
             Image(
