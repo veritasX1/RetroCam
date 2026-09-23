@@ -22,6 +22,7 @@ class LookRenderer {
     private var uHighlightRolloffLoc = 0
     private var uShadowLiftLoc = 0
     private var uGrainIntensityLoc = 0
+    private var uGrainBlendModeLoc = 0
     private var uGrainSizeLoc = 0
     private var uSoftnessLoc = 0
     private var uVignetteLoc = 0
@@ -50,6 +51,7 @@ class LookRenderer {
         uHighlightRolloffLoc = GLES20.glGetUniformLocation(program, "uHighlightRolloff")
         uShadowLiftLoc = GLES20.glGetUniformLocation(program, "uShadowLift")
         uGrainIntensityLoc = GLES20.glGetUniformLocation(program, "uGrainIntensity")
+        uGrainBlendModeLoc = GLES20.glGetUniformLocation(program, "uGrainBlendMode")
         uGrainSizeLoc = GLES20.glGetUniformLocation(program, "uGrainSize")
         uSoftnessLoc = GLES20.glGetUniformLocation(program, "uSoftness")
         uVignetteLoc = GLES20.glGetUniformLocation(program, "uVignette")
@@ -123,6 +125,7 @@ class LookRenderer {
         GLES20.glUniform1f(uHighlightRolloffLoc, look.highlightRolloff)
         GLES20.glUniform1f(uShadowLiftLoc, look.shadowLift)
         GLES20.glUniform1f(uGrainIntensityLoc, look.grainIntensity)
+        GLES20.glUniform1f(uGrainBlendModeLoc, look.grainBlendMode.shaderValue)
         GLES20.glUniform1f(uGrainSizeLoc, look.grainSize)
         GLES20.glUniform1f(uSoftnessLoc, look.softness)
         GLES20.glUniform1f(uVignetteLoc, look.vignette)

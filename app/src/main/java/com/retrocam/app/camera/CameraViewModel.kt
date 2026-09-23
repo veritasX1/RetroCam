@@ -30,6 +30,7 @@ import com.retrocam.app.camera.gl.RetroCamSurfaceProcessor
 import com.retrocam.app.data.CaptureMode
 import com.retrocam.app.data.DateStampSettings
 import com.retrocam.app.data.FilmStockPreset
+import com.retrocam.app.data.GrainBlendMode
 import com.retrocam.app.data.GrainOverride
 import com.retrocam.app.data.LocationStampMode
 import com.retrocam.app.data.NO_FILTER_DESCRIPTION
@@ -80,6 +81,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
     val shutterSound: StateFlow<ShutterSound> = settings.shutterSound.eager(ShutterSound.CLICK)
     val softness: StateFlow<Softness> = settings.softness.eager(Softness.OFF)
     val grainOverride: StateFlow<GrainOverride> = settings.grainOverride.eager(GrainOverride.STANDARD)
+    val grainBlendMode: StateFlow<GrainBlendMode> = settings.grainBlendMode.eager(GrainBlendMode.FILMKORN)
     val videoFps: StateFlow<Int> = settings.videoFps.eager(0)
     val locationEnabled: StateFlow<Boolean> = settings.locationEnabled.eager(false)
     val dateStampSettings: StateFlow<DateStampSettings> = settings.dateStampSettings.eager(DateStampSettings())
@@ -182,8 +184,10 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 .combine(filmStocks) { pair, stocks -> Triple(pair.first, pair.second, stocks) }
                 .combine(selectedFilmStockId) { triple, stockId -> triple to stockId }
                 .combine(softness) { (triple, stockId), extraSoftness -> Triple(triple, stockId, extraSoftness) }
-                .combine(grainOverride) { (triple, stockId, extraSoftness), grain ->
-                    updateLook(triple.first, triple.second, triple.third, stockId, extraSoftness, grain)
+                .combine(grainOverride) { (triple, stockId, extraSoftness), grain -> Triple(triple, stockId, extraSoftness to grain) }
+                .combine(grainBlendMode) { (triple, stockId, softnessAndGrain), blendMode ->
+                    val (extraSoftness, grain) = softnessAndGrain
+                    updateLook(triple.first, triple.second, triple.third, stockId, extraSoftness, grain, blendMode)
                 }
                 .collect {}
         }
@@ -196,6 +200,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         stockId: Long,
         extraSoftness: Softness,
         grainOverride: GrainOverride,
+        grainBlendMode: GrainBlendMode,
     ) {
         // "No filter" stays completely clean - the grain switch only kicks
         // in once an actual recipe/film stock is applying a look, it
@@ -211,9 +216,11 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         }
         val resolved = base ?: RenderLook.NEUTRAL
         val combinedSoftness = (resolved.softness + extraSoftness.blurAmount).coerceIn(0f, 1f)
-        val withSoftness = resolved.copy(softness = combinedSoftness)
+        val withSoftness = resolved.copy(softness = combinedSoftness, grainBlendMode = grainBlendMode)
         currentLook.set(if (isNoFilter) withSoftness else withSoftness.withGrainOverride(grainOverride))
     }
+
+    fun setGrainBlendMode(value: GrainBlendMode) { viewModelScope.launch { settings.setGrainBlendMode(value) } }
 
     fun selectMode(m: CaptureMode) { viewModelScope.launch { settings.setCaptureMode(m) } }
 
