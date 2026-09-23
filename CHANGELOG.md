@@ -2,6 +2,21 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.3.0] - 2026-09-23
+
+### Added
+- **Aspect ratio picker (4:3 / 16:9 / 1:1)** for photos, next to the shutter button. Applied as a center-crop in post-processing (works uniformly regardless of the raw capture resolution/aspect, and covers 1:1, which CameraX's own resolution selector can't do natively).
+- **Recipe editor now uses sliders** for every numeric parameter (WB shift, highlight, shadow, color, sharpness, high ISO NR, clarity) instead of typing numbers in text fields, each with Fuji's own real range and step granularity.
+- The recipe editor's **Name field is now pinned above the scrolling parameter list** instead of buried as just another field in it - easy to miss before.
+
+### Changed
+- **The recipe/film-stock picker moved out of the right-side black area into a horizontally swipeable strip directly under the live image** (landscape), with a black fade-out on both edges hinting there's more to scroll to. The right-side area now only holds the shutter, mode toggle, thumbnail, and aspect ratio picker.
+- **Fixed a real color-accuracy bug in how recipes are rendered**: `Recipe.toRenderLook()` only read the White Balance *shift* (the R/B numbers), never the White Balance *setting* itself (e.g. "6600K", "Auto (Ambience Priority)") - but for several of the built-in recipes (transcribed from fujixweekly.com), most of the intended warmth actually comes from that base setting, not the shift on top of it. Verified numerically on-device (a warmth metric on a fixed test scene, before/after): Ektachrome 320T went from essentially zero measurable warmth to a clearly positive value, matching its source description ("warm", "amber and golden"); Portra 800 and Ektar 100 saw similar corrections. This is a deliberate approximation for a non-Fuji sensor and color pipeline, not a color-science match - still expect to keep tuning it against real photos.
+- README now links to GitHub Releases and CHANGELOG.md near the top (previously only reachable by knowing to look at the repo's Releases tab).
+
+### Fixed
+- Replaced two README screenshots that inadvertently showed readable content on the test device's monitor in the background - re-shot against a scene with no screen content visible.
+
 ## [0.2.2] - 2026-09-23
 
 ### Changed

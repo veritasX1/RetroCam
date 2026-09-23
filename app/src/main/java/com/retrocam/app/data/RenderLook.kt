@@ -88,6 +88,28 @@ fun Recipe.toRenderLook(): RenderLook {
     val blueShift = clamp(wbShiftBlue / 9f, -1f, 1f)
     // More red / less blue reads as warmer, and vice versa.
     val wbWarmth = clamp((redShift - blueShift) / 2f, -1f, 1f)
+    // The R/B *shift* alone routinely undersells a real recipe's warmth -
+    // verified on-device: Ektachrome 320T (wbShiftRed=-6, wbShiftBlue=-5)
+    // computed to a near-zero wbWarmth above (the two shifts nearly cancel
+    // out), yet fujixweekly.com's own description of this exact recipe
+    // calls it distinctly warm/"amber and golden". The missing piece is
+    // the recipe's actual whiteBalance FIELD, previously ignored entirely
+    // here - a recipe calling for "6600K" or "6050K" is deliberately
+    // telling the camera the ambient light is *cooler* than that, so it
+    // over-corrects warmer than a neutral ~5500K rendition would - that's
+    // where most of a recipe's warmth often actually comes from, on top
+    // of (not instead of) the R/B shift. Modes without an explicit Kelvin
+    // number get a smaller heuristic nudge instead, since Fuji's own
+    // "Auto (Ambience Priority)" is specifically designed to preserve/
+    // lean into warm ambient light rather than neutralize it (the
+    // opposite of "White Priority", which corrects it away harder).
+    val kelvin = Regex("(\\d{4,5})\\s*K").find(whiteBalance)?.groupValues?.get(1)?.toFloatOrNull()
+    val whiteBalanceWarmth = when {
+        kelvin != null -> clamp((kelvin - 5500f) / 3500f, -1f, 1f)
+        whiteBalance.contains("ambience priority", ignoreCase = true) -> 0.3f
+        whiteBalance.contains("white priority", ignoreCase = true) -> -0.1f
+        else -> 0f
+    }
 
     // Dynamic Range widens highlight/shadow headroom by underexposing and
     // pulling shadows back up in-camera - DR400 reads visibly flatter and
@@ -159,7 +181,7 @@ fun Recipe.toRenderLook(): RenderLook {
 
     return RenderLook(
         name = name,
-        warmth = clamp(base.baseWarmth + wbWarmth * 0.6f - fxBlueStrength * 0.05f, -1f, 1f),
+        warmth = clamp(base.baseWarmth + wbWarmth * 0.6f + whiteBalanceWarmth - fxBlueStrength * 0.05f, -1f, 1f),
         tintGreenMagenta = 0f,
         saturation = saturation,
         contrast = contrast,

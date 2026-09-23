@@ -16,6 +16,7 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.exifinterface.media.ExifInterface
 import com.retrocam.app.R
 import com.retrocam.app.camera.gl.PhotoLookBaker
+import com.retrocam.app.data.CaptureAspectRatio
 import com.retrocam.app.data.DateStampSettings
 import com.retrocam.app.data.RenderLook
 import com.retrocam.app.data.StampCorner
@@ -50,12 +51,13 @@ object PhotoPostProcessor {
         context: Context,
         uri: Uri,
         look: RenderLook,
+        aspectRatio: CaptureAspectRatio,
         recipeDescription: String,
         dateStamp: DateStampSettings,
         locationText: String?,
         location: Location?,
     ) = withContext(Dispatchers.IO) {
-        bakeLook(context, uri, look)
+        bakeLook(context, uri, look, aspectRatio)
         if (dateStamp.enabled || locationText != null) {
             burnInStamp(context, uri, dateStamp, locationText)
         }
@@ -71,7 +73,7 @@ object PhotoPostProcessor {
     // downstream (burnInStamp, the gallery, Immich) can then keep assuming
     // "pixels are already upright" like before, instead of every consumer
     // needing to separately handle EXIF-orientation-aware rotation.
-    private fun bakeLook(context: Context, uri: Uri, look: RenderLook) {
+    private fun bakeLook(context: Context, uri: Uri, look: RenderLook, aspectRatio: CaptureAspectRatio) {
         val rotationDegrees = context.contentResolver.openInputStream(uri)
             ?.use { ExifInterface(it).rotationDegrees } ?: 0
         val decoded = context.contentResolver.openInputStream(uri)
@@ -84,8 +86,11 @@ object PhotoPostProcessor {
         val graded = PhotoLookBaker.bake(context, upright, look)
         upright.recycle()
 
-        val encoded = java.io.ByteArrayOutputStream().also { graded.compress(Bitmap.CompressFormat.JPEG, 95, it) }
-        graded.recycle()
+        val cropped = cropToAspectRatio(graded, aspectRatio)
+        if (cropped !== graded) graded.recycle()
+
+        val encoded = java.io.ByteArrayOutputStream().also { cropped.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+        cropped.recycle()
         context.contentResolver.openOutputStream(uri, "wt")?.use { out -> out.write(encoded.toByteArray()) }
         // Same staleness concern as burnInStamp's own update below - if no
         // stamp follows this is the only content write, and other apps
@@ -101,6 +106,29 @@ object PhotoPostProcessor {
                 null,
                 null,
             )
+        }
+    }
+
+    // Center-crop only (never upscale/pad) - works uniformly for all three
+    // ratios regardless of whatever raw aspect ImageCapture actually
+    // lands on, which is why this happens here rather than via CameraX's
+    // own ResolutionSelector (AspectRatioStrategy only has 4:3/16:9
+    // buckets - nothing for 1:1).
+    private fun cropToAspectRatio(bitmap: Bitmap, aspectRatio: CaptureAspectRatio): Bitmap {
+        val current = bitmap.width.toFloat() / bitmap.height.toFloat()
+        val target = aspectRatio.ratio
+        return when {
+            current > target -> {
+                val newWidth = (bitmap.height * target).toInt().coerceIn(1, bitmap.width)
+                val x = (bitmap.width - newWidth) / 2
+                Bitmap.createBitmap(bitmap, x, 0, newWidth, bitmap.height)
+            }
+            current < target -> {
+                val newHeight = (bitmap.width / target).toInt().coerceIn(1, bitmap.height)
+                val y = (bitmap.height - newHeight) / 2
+                Bitmap.createBitmap(bitmap, 0, y, bitmap.width, newHeight)
+            }
+            else -> bitmap
         }
     }
 

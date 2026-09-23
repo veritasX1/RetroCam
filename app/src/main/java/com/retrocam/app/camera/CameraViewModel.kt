@@ -26,6 +26,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
+import com.retrocam.app.data.CaptureAspectRatio
 import com.retrocam.app.data.CaptureMode
 import com.retrocam.app.data.DateStampSettings
 import com.retrocam.app.data.FilmStockPreset
@@ -80,6 +81,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
     val shutterSound: StateFlow<ShutterSound> = settings.shutterSound.eager(ShutterSound.CLICK)
     val softness: StateFlow<Softness> = settings.softness.eager(Softness.OFF)
     val grainOverride: StateFlow<GrainOverride> = settings.grainOverride.eager(GrainOverride.STANDARD)
+    val captureAspectRatio: StateFlow<CaptureAspectRatio> = settings.captureAspectRatio.eager(CaptureAspectRatio.RATIO_4_3)
     val grainBlendMode: StateFlow<GrainBlendMode> = settings.grainBlendMode.eager(GrainBlendMode.FILMKORN)
     val videoFps: StateFlow<Int> = settings.videoFps.eager(0)
     val locationEnabled: StateFlow<Boolean> = settings.locationEnabled.eager(false)
@@ -253,6 +255,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         viewModelScope.launch { settings.setSelectedFilmStockId(id) }
     }
     fun setGrainOverride(value: GrainOverride) { viewModelScope.launch { settings.setGrainOverride(value) } }
+    fun setCaptureAspectRatio(value: CaptureAspectRatio) { viewModelScope.launch { settings.setCaptureAspectRatio(value) } }
 
     fun selectCamera(option: CameraOption) {
         // Switching the physical camera means tearing down and rebuilding
@@ -560,6 +563,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         // the one that should get baked in, even if the user changes
         // recipe/settings in the brief window before the callback runs.
         val look = currentLook.get()
+        val aspectRatio = captureAspectRatio.value
         playShutterSound()
         val name = "RetroCam_${timestamp()}.jpg"
         val values = ContentValues().apply {
@@ -586,7 +590,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
                     // allowed to crash the app and take an otherwise-fine
                     // photo down with it.
                     viewModelScope.launch {
-                        runCatching { postProcessPhoto(context, uri, look) }
+                        runCatching { postProcessPhoto(context, uri, look, aspectRatio) }
                             .onFailure { android.util.Log.e("RetroCam", "postProcessPhoto failed for $uri", it) }
                     }
                 }
@@ -595,7 +599,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         )
     }
 
-    private suspend fun postProcessPhoto(context: Context, uri: Uri, look: RenderLook) {
+    private suspend fun postProcessPhoto(context: Context, uri: Uri, look: RenderLook, aspectRatio: CaptureAspectRatio) {
         val recipeDescription = recipes.value.firstOrNull { it.id == selectedRecipeId.value }
             ?.toDescription() ?: NO_FILTER_DESCRIPTION
         val stampSettings = dateStampSettings.value
@@ -607,7 +611,7 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
             stampMode == LocationStampMode.POSTAL_CODE -> LocationProvider.postalCode(context, location.latitude, location.longitude)
             else -> null
         }
-        PhotoPostProcessor.process(context, uri, look, recipeDescription, stampSettings, locationText, location)
+        PhotoPostProcessor.process(context, uri, look, aspectRatio, recipeDescription, stampSettings, locationText, location)
     }
 
     fun startRecording(context: Context, onStateChanged: (Boolean) -> Unit) {
