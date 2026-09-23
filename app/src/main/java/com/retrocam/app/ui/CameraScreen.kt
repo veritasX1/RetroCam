@@ -194,21 +194,24 @@ fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit, onOpenP
         // image - the user explicitly asked for zero cropping, full FOV
         // always visible.
         //
-        // sidebarSize/chipStripHeight are reserved BEFORE fitting the
-        // 16:9 rect, so the controls get a guaranteed clear area instead
-        // of the image simply claiming all available space and the
-        // controls spilling over its edge - sidebarSize sized against the
-        // aspect-ratio picker + shutter column, chipStripHeight against
-        // one row of chips, both measured on-device.
-        val sidebarSize = 220.dp
-        val chipStripHeight = 96.dp
+        // In landscape the image always takes the FULL screen height (no
+        // height reserved for the filter strip anymore - that's now
+        // overlaid directly on the image's own bottom edge instead of
+        // pushing it up, per the user's explicit "auch wenn dann die
+        // Elemente unten im Bild sind" call). Only sidebarSize is still
+        // reserved up front (against the aspect-ratio picker + shutter
+        // column, measured on-device) so those controls keep a guaranteed
+        // clear area instead of the image claiming all available width -
+        // shrunk from the original 220dp since that black area read as
+        // too dominant/prominent once the image was already letterboxed.
+        val sidebarSize = 170.dp
+        val filterStripHeight = 96.dp
         val previewWidth: androidx.compose.ui.unit.Dp
         val previewHeight: androidx.compose.ui.unit.Dp
         if (isLandscapeConfig) {
             val availableWidth = maxWidth - sidebarSize
-            val availableHeight = maxHeight - chipStripHeight
-            previewWidth = minOf(availableWidth, availableHeight * (16f / 9f))
-            previewHeight = minOf(availableHeight, previewWidth * (9f / 16f))
+            previewWidth = minOf(availableWidth, maxHeight * (16f / 9f))
+            previewHeight = minOf(maxHeight, previewWidth * (9f / 16f))
         } else {
             val availableHeight = maxHeight - sidebarSize
             previewHeight = minOf(availableHeight, maxWidth * (16f / 9f))
@@ -228,10 +231,13 @@ fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit, onOpenP
             }
         }
         if (isLandscapeConfig) {
-            Column(Modifier.width(previewWidth).align(Alignment.TopStart)) {
-                AndroidView(modifier = previewModifier, factory = previewFactory)
-                FadingFilterStrip(Modifier.fillMaxWidth().height(chipStripHeight)) { filterChips() }
-            }
+            AndroidView(modifier = previewModifier.align(Alignment.TopStart), factory = previewFactory)
+            // Overlaid directly on the image's own bottom edge (not a
+            // separate reserved strip below it anymore) - width-matched to
+            // the image so it never spills into the sidebar.
+            FadingFilterStrip(
+                Modifier.width(previewWidth).height(filterStripHeight).align(Alignment.BottomStart),
+            ) { filterChips() }
         } else {
             AndroidView(modifier = previewModifier.align(Alignment.TopCenter), factory = previewFactory)
         }
