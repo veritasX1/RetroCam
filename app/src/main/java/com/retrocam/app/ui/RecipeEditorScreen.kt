@@ -20,6 +20,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -41,6 +43,7 @@ import com.retrocam.app.data.Recipe
 import com.retrocam.app.data.RetroCamDatabase
 import com.retrocam.app.ui.theme.RetroAccent
 import com.retrocam.app.ui.theme.RetroWhite
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /**
@@ -62,14 +65,16 @@ fun RecipeEditorScreen(existing: Recipe?, onDone: () -> Unit) {
     var colorChromeEffect by remember { mutableStateOf(existing?.colorChromeEffect ?: EffectStrength.OFF) }
     var colorChromeFxBlue by remember { mutableStateOf(existing?.colorChromeFxBlue ?: EffectStrength.OFF) }
     var whiteBalance by remember { mutableStateOf(existing?.whiteBalance ?: "Auto") }
-    var wbShiftRed by remember { mutableStateOf((existing?.wbShiftRed ?: 0).toString()) }
-    var wbShiftBlue by remember { mutableStateOf((existing?.wbShiftBlue ?: 0).toString()) }
-    var highlight by remember { mutableStateOf((existing?.highlight ?: 0f).toString()) }
-    var shadow by remember { mutableStateOf((existing?.shadow ?: 0f).toString()) }
-    var color by remember { mutableStateOf((existing?.color ?: 0).toString()) }
-    var sharpness by remember { mutableStateOf((existing?.sharpness ?: 0).toString()) }
-    var highIsoNr by remember { mutableStateOf((existing?.highIsoNr ?: 0).toString()) }
-    var clarity by remember { mutableStateOf((existing?.clarity ?: 0).toString()) }
+    // Sliders operate on Float throughout (Slider's own API), rounded back
+    // to Int for the Int-typed Recipe fields only when saving.
+    var wbShiftRed by remember { mutableStateOf((existing?.wbShiftRed ?: 0).toFloat()) }
+    var wbShiftBlue by remember { mutableStateOf((existing?.wbShiftBlue ?: 0).toFloat()) }
+    var highlight by remember { mutableStateOf(existing?.highlight ?: 0f) }
+    var shadow by remember { mutableStateOf(existing?.shadow ?: 0f) }
+    var color by remember { mutableStateOf((existing?.color ?: 0).toFloat()) }
+    var sharpness by remember { mutableStateOf((existing?.sharpness ?: 0).toFloat()) }
+    var highIsoNr by remember { mutableStateOf((existing?.highIsoNr ?: 0).toFloat()) }
+    var clarity by remember { mutableStateOf((existing?.clarity ?: 0).toFloat()) }
     var isoNote by remember { mutableStateOf(existing?.isoNote ?: "Auto") }
     var exposureCompensation by remember { mutableStateOf(existing?.exposureCompensation ?: "0") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
@@ -86,8 +91,13 @@ fun RecipeEditorScreen(existing: Recipe?, onDone: () -> Unit) {
             )
         }
 
+        // Pinned above the scrolling parameter list, not buried inside it
+        // as just another field - naming the recipe is the one thing
+        // every recipe needs, and it was easy to miss scrolled in among
+        // a dozen similar-looking fields before.
+        Field("Name", name) { name = it }
+
         LazyColumn(Modifier.weight(1f).padding(top = 8.dp)) {
-            item { Field("Name", name) { name = it } }
             item {
                 EnumRow(
                     "Film Simulation",
@@ -102,14 +112,14 @@ fun RecipeEditorScreen(existing: Recipe?, onDone: () -> Unit) {
             item { EnumRow("Color Chrome Effect", EffectStrength.entries, colorChromeEffect, { it.name }) { colorChromeEffect = it } }
             item { EnumRow("Color Chrome FX Blue", EffectStrength.entries, colorChromeFxBlue, { it.name }) { colorChromeFxBlue = it } }
             item { Field("White Balance", whiteBalance) { whiteBalance = it } }
-            item { Field("WB Shift Red (-9..9)", wbShiftRed) { wbShiftRed = it } }
-            item { Field("WB Shift Blue (-9..9)", wbShiftBlue) { wbShiftBlue = it } }
-            item { Field("Highlight", highlight) { highlight = it } }
-            item { Field("Shadow", shadow) { shadow = it } }
-            item { Field("Color", color) { color = it } }
-            item { Field("Sharpness", sharpness) { sharpness = it } }
-            item { Field("High ISO NR", highIsoNr) { highIsoNr = it } }
-            item { Field("Clarity", clarity) { clarity = it } }
+            item { SliderField("WB Shift Red", wbShiftRed, -9f..9f, steps = 17) { wbShiftRed = it } }
+            item { SliderField("WB Shift Blue", wbShiftBlue, -9f..9f, steps = 17) { wbShiftBlue = it } }
+            item { SliderField("Highlight", highlight, -2f..4f, steps = 11) { highlight = it } }
+            item { SliderField("Shadow", shadow, -2f..4f, steps = 11) { shadow = it } }
+            item { SliderField("Color", color, -4f..4f, steps = 7) { color = it } }
+            item { SliderField("Sharpness", sharpness, -4f..4f, steps = 7) { sharpness = it } }
+            item { SliderField("High ISO NR", highIsoNr, -4f..4f, steps = 7) { highIsoNr = it } }
+            item { SliderField("Clarity", clarity, -5f..5f, steps = 9) { clarity = it } }
             item { Field("ISO", isoNote) { isoNote = it } }
             item { Field("Exposure Compensation", exposureCompensation) { exposureCompensation = it } }
             item { Field("Notes / Quelle", notes, singleLine = false) { notes = it } }
@@ -132,14 +142,14 @@ fun RecipeEditorScreen(existing: Recipe?, onDone: () -> Unit) {
                         colorChromeEffect = colorChromeEffect,
                         colorChromeFxBlue = colorChromeFxBlue,
                         whiteBalance = whiteBalance,
-                        wbShiftRed = wbShiftRed.toIntOrNull() ?: 0,
-                        wbShiftBlue = wbShiftBlue.toIntOrNull() ?: 0,
-                        highlight = highlight.toFloatOrNull() ?: 0f,
-                        shadow = shadow.toFloatOrNull() ?: 0f,
-                        color = color.toIntOrNull() ?: 0,
-                        sharpness = sharpness.toIntOrNull() ?: 0,
-                        highIsoNr = highIsoNr.toIntOrNull() ?: 0,
-                        clarity = clarity.toIntOrNull() ?: 0,
+                        wbShiftRed = wbShiftRed.roundToInt(),
+                        wbShiftBlue = wbShiftBlue.roundToInt(),
+                        highlight = highlight,
+                        shadow = shadow,
+                        color = color.roundToInt(),
+                        sharpness = sharpness.roundToInt(),
+                        highIsoNr = highIsoNr.roundToInt(),
+                        clarity = clarity.roundToInt(),
                         isoNote = isoNote,
                         exposureCompensation = exposureCompensation,
                         notes = notes,
@@ -173,6 +183,33 @@ private fun Field(label: String, value: String, singleLine: Boolean = true, onCh
             unfocusedLabelColor = Color.Gray,
         ),
     )
+}
+
+/** Displays the current value (formatted without a trailing ".0" for
+ * whole numbers, since most of these fields are conceptually integers
+ * even where stored as Float) alongside a Slider snapped to [steps] even
+ * increments across [range] - e.g. steps=17 across -9f..9f gives whole-
+ * integer stops, matching Fuji's own -9..9 WB shift granularity. */
+@Composable
+private fun SliderField(label: String, value: Float, range: ClosedFloatingPointRange<Float>, steps: Int, onChange: (Float) -> Unit) {
+    Column(Modifier.padding(vertical = 6.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            val display = if (value == value.toInt().toFloat()) value.toInt().toString() else value.toString()
+            Text(display, color = RetroWhite, style = MaterialTheme.typography.bodySmall)
+        }
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = range,
+            steps = steps,
+            colors = SliderDefaults.colors(
+                thumbColor = RetroAccent,
+                activeTrackColor = RetroAccent,
+                inactiveTrackColor = Color(0x33FFFFFF),
+            ),
+        )
+    }
 }
 
 @Composable

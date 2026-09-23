@@ -22,6 +22,17 @@ enum class Softness(val blurAmount: Float) {
 
 enum class CaptureMode { PHOTO, VIDEO }
 
+/** Photo-only (video keeps its own fixed 16:9) - applied as a center-crop
+ * in post-processing (see PhotoPostProcessor.cropToAspectRatio), not via
+ * CameraX's own ResolutionSelector: AspectRatioStrategy only offers 4:3/
+ * 16:9 buckets, nothing for 1:1, and post-crop works uniformly for all
+ * three regardless of whatever raw aspect ImageCapture actually lands on. */
+enum class CaptureAspectRatio(val label: String, val ratio: Float) {
+    RATIO_4_3("4:3", 4f / 3f),
+    RATIO_16_9("16:9", 16f / 9f),
+    RATIO_1_1("1:1", 1f),
+}
+
 /** Global override for the real-film-grain overlay (see RenderLook.grainSetKey /
  * GrainTexture) - applies uniformly to both photo and video, on top of
  * whatever gauge the active recipe/film stock would otherwise pick, so the
@@ -70,6 +81,7 @@ class SettingsRepository(private val context: Context) {
         val DATE_STAMP_ZERO_PAD = booleanPreferencesKey("date_stamp_zero_pad")
         val LOCATION_STAMP_MODE = stringPreferencesKey("location_stamp_mode")
         val GRAIN_OVERRIDE = stringPreferencesKey("grain_override")
+        val CAPTURE_ASPECT_RATIO = stringPreferencesKey("capture_aspect_ratio")
         val GRAIN_BLEND_MODE = stringPreferencesKey("grain_blend_mode")
     }
 
@@ -179,6 +191,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLocationStampMode(value: LocationStampMode) {
         context.dataStore.edit { it[Keys.LOCATION_STAMP_MODE] = value.name }
+    }
+
+    val captureAspectRatio: Flow<CaptureAspectRatio> = context.dataStore.data.map { prefs ->
+        prefs[Keys.CAPTURE_ASPECT_RATIO]?.let { runCatching { CaptureAspectRatio.valueOf(it) }.getOrNull() }
+            ?: CaptureAspectRatio.RATIO_4_3
+    }
+
+    suspend fun setCaptureAspectRatio(value: CaptureAspectRatio) {
+        context.dataStore.edit { it[Keys.CAPTURE_ASPECT_RATIO] = value.name }
     }
 
     val grainOverride: Flow<GrainOverride> = context.dataStore.data.map { prefs ->
