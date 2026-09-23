@@ -82,6 +82,8 @@ class LookRenderer {
         look: RenderLook,
         viewportWidth: Int,
         viewportHeight: Int,
+        inputWidth: Int,
+        inputHeight: Int,
     ) {
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
@@ -129,7 +131,16 @@ class LookRenderer {
         GLES20.glUniform1f(uGrainSizeLoc, look.grainSize)
         GLES20.glUniform1f(uSoftnessLoc, look.softness)
         GLES20.glUniform1f(uVignetteLoc, look.vignette)
-        GLES20.glUniform2f(uTexelSizeLoc, 1f / viewportWidth, 1f / viewportHeight)
+        // uTexelSize drives texel-based sampling math (softness blur
+        // radius, grain sizing) against sTexture, the INPUT camera stream
+        // - it must be 1/input size, not 1/output size. Those aren't the
+        // same thing: this single input stream feeds every attached
+        // output (preview, video, photo) at whatever resolution each one
+        // independently renders to, so using the output's own size here
+        // silently mis-scaled softness/grain per use case (e.g. over-
+        // blurring a lower-res preview relative to a higher-res photo,
+        // or vice versa depending on which is actually larger).
+        GLES20.glUniform2f(uTexelSizeLoc, 1f / inputWidth.coerceAtLeast(1), 1f / inputHeight.coerceAtLeast(1))
 
         grainOffsetX = (grainOffsetX + 0.037f) % 1f
         grainOffsetY = (grainOffsetY + 0.071f) % 1f

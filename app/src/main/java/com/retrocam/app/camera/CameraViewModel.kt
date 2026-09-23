@@ -409,7 +409,14 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         val preview = Preview.Builder().apply { applyFixedFps(fps); setTargetRotation(lastKnownRotation) }.build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
-        val capture = ImageCapture.Builder().setTargetRotation(lastKnownRotation).build()
+        // MINIMIZE_LATENCY (CameraX's default) trades quality for speed -
+        // fine for a burst-shooting app, wrong for one whose whole point
+        // is the photo looking as good as the sensor can produce before
+        // the retro look is even applied.
+        val capture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setTargetRotation(lastKnownRotation)
+            .build()
         val recorder = Recorder.Builder()
             .setQualitySelector(QualitySelector.from(Quality.FHD))
             .build()
