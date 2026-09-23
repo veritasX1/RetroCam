@@ -1,5 +1,6 @@
 package com.retrocam.app.ui
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -12,14 +13,18 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.BoxWithConstraintsScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +60,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -194,6 +200,101 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
         }
     }
 
+    val isLandscapeConfig = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Shared between the portrait (full-width, below the image) and
+    // landscape (fixed-width sidebar, right of the image) layouts - the
+    // controls themselves don't care which orientation put them there,
+    // only the container around this lambda differs.
+    val controlsContent: @Composable ColumnScope.() -> Unit = {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            ModeLabel("Zuschneiden", mode == EditorMode.CROP) { mode = EditorMode.CROP }
+            ModeLabel("Anpassen", mode == EditorMode.ADJUST) { mode = EditorMode.ADJUST }
+            Box(Modifier.weight(1f))
+            IconButton(onClick = { rotate90() }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Drehen", tint = RetroWhite)
+            }
+        }
+
+        if (mode == EditorMode.CROP) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ASPECT_PRESETS.forEach { preset ->
+                    AspectChip(preset.label, selectedPresetLabel == preset.label) {
+                        selectedPresetLabel = preset.label
+                        applyPreset(preset.ratio)
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = { applyCrop() }) {
+                    Icon(Icons.Filled.Check, contentDescription = "Zuschnitt anwenden", tint = RetroAccent)
+                }
+            }
+        } else {
+            AdjustSlider("Helligkeit", brightness) { brightness = it }
+            AdjustSlider("Kontrast", contrast) { contrast = it }
+            AdjustSlider("Sättigung", saturation) { saturation = it }
+        }
+    }
+
+    // Shared between both orientations too - only the BoxWithConstraints
+    // call site's own modifier (fill available width vs. available height)
+    // differs, so the image/crop-overlay logic itself lives here once.
+    val imageContent: @Composable BoxWithConstraintsScope.() -> Unit = {
+        val bmp = workingBitmap
+        if (isLoading) {
+            CircularProgressIndicator(color = RetroAccent)
+        } else if (bmp != null) {
+            val maxWPx = with(density) { maxWidth.toPx() }
+            val maxHPx = with(density) { maxHeight.toPx() }
+            val bmpAspect = bmp.width.toFloat() / bmp.height
+            val boxAspect = maxWPx / maxHPx
+            val (dispWPx, dispHPx) = if (bmpAspect > boxAspect) {
+                maxWPx to maxWPx / bmpAspect
+            } else {
+                maxHPx * bmpAspect to maxHPx
+            }
+            val dispWDp = with(density) { dispWPx.toDp() }
+            val dispHDp = with(density) { dispHPx.toDp() }
+
+            Box(
+                Modifier
+                    .size(dispWDp, dispHDp)
+                    // A crop handle can legitimately sit right at the
+                    // image's left/right edge (a full-width or
+                    // near-full-width rect isn't unusual), which is
+                    // exactly where gesture-nav's edge back-swipe
+                    // detection also lives - without this, dragging
+                    // that handle can get eaten by the system back
+                    // gesture instead of resizing the crop (confirmed
+                    // by hand while testing this screen).
+                    .systemGestureExclusion()
+                    .onSizeChanged { imageBoxSizePx = it.toSize() },
+            ) {
+                Image(
+                    bmp.asImageBitmap(),
+                    contentDescription = "Foto",
+                    modifier = Modifier.fillMaxSize(),
+                    colorFilter = ColorFilter.colorMatrix(colorMatrix()),
+                )
+                val rect = cropRect
+                if (mode == EditorMode.CROP && rect != null) {
+                    CropOverlay(
+                        rect = rect,
+                        boxSize = imageBoxSizePx ?: Size.Zero,
+                        onRectChange = { cropRect = it },
+                    )
+                }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
@@ -213,93 +314,33 @@ fun PhotoEditorScreen(uri: Uri, onDone: () -> Unit) {
             }
         }
 
-        BoxWithConstraints(
-            Modifier.weight(1f).fillMaxWidth().padding(16.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            val bmp = workingBitmap
-            if (isLoading) {
-                CircularProgressIndicator(color = RetroAccent)
-            } else if (bmp != null) {
-                val maxWPx = with(density) { maxWidth.toPx() }
-                val maxHPx = with(density) { maxHeight.toPx() }
-                val bmpAspect = bmp.width.toFloat() / bmp.height
-                val boxAspect = maxWPx / maxHPx
-                val (dispWPx, dispHPx) = if (bmpAspect > boxAspect) {
-                    maxWPx to maxWPx / bmpAspect
-                } else {
-                    maxHPx * bmpAspect to maxHPx
-                }
-                val dispWDp = with(density) { dispWPx.toDp() }
-                val dispHDp = with(density) { dispHPx.toDp() }
-
-                Box(
-                    Modifier
-                        .size(dispWDp, dispHDp)
-                        // A crop handle can legitimately sit right at the
-                        // image's left/right edge (a full-width or
-                        // near-full-width rect isn't unusual), which is
-                        // exactly where gesture-nav's edge back-swipe
-                        // detection also lives - without this, dragging
-                        // that handle can get eaten by the system back
-                        // gesture instead of resizing the crop (confirmed
-                        // by hand while testing this screen).
-                        .systemGestureExclusion()
-                        .onSizeChanged { imageBoxSizePx = it.toSize() },
-                ) {
-                    Image(
-                        bmp.asImageBitmap(),
-                        contentDescription = "Foto",
-                        modifier = Modifier.fillMaxSize(),
-                        colorFilter = ColorFilter.colorMatrix(colorMatrix()),
-                    )
-                    val rect = cropRect
-                    if (mode == EditorMode.CROP && rect != null) {
-                        CropOverlay(
-                            rect = rect,
-                            boxSize = imageBoxSizePx ?: Size.Zero,
-                            onRectChange = { cropRect = it },
-                        )
-                    }
-                }
+        if (isLandscapeConfig) {
+            // Controls move to a fixed-width sidebar on the right instead
+            // of stacking below the image - on a landscape screen the
+            // available height is short, so reserving a chunk of it for
+            // three sliders + mode row (as the portrait layout does)
+            // squeezed the image down to a sliver. Side-by-side instead
+            // gives the image the full height and the sliders a properly
+            // sized, non-cramped column.
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                BoxWithConstraints(
+                    Modifier.weight(1f).fillMaxHeight().padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                    content = imageContent,
+                )
+                Column(
+                    Modifier.width(300.dp).fillMaxHeight().padding(top = 8.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.Center,
+                    content = controlsContent,
+                )
             }
-        }
-
-        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp, top = 8.dp)) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-            ) {
-                ModeLabel("Zuschneiden", mode == EditorMode.CROP) { mode = EditorMode.CROP }
-                ModeLabel("Anpassen", mode == EditorMode.ADJUST) { mode = EditorMode.ADJUST }
-                Box(Modifier.weight(1f))
-                IconButton(onClick = { rotate90() }) {
-                    Icon(Icons.Filled.Refresh, contentDescription = "Drehen", tint = RetroWhite)
-                }
-            }
-
-            if (mode == EditorMode.CROP) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    ASPECT_PRESETS.forEach { preset ->
-                        AspectChip(preset.label, selectedPresetLabel == preset.label) {
-                            selectedPresetLabel = preset.label
-                            applyPreset(preset.ratio)
-                        }
-                    }
-                }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
-                    IconButton(onClick = { applyCrop() }) {
-                        Icon(Icons.Filled.Check, contentDescription = "Zuschnitt anwenden", tint = RetroAccent)
-                    }
-                }
-            } else {
-                AdjustSlider("Helligkeit", brightness) { brightness = it }
-                AdjustSlider("Kontrast", contrast) { contrast = it }
-                AdjustSlider("Sättigung", saturation) { saturation = it }
-            }
+        } else {
+            BoxWithConstraints(
+                Modifier.weight(1f).fillMaxWidth().padding(16.dp),
+                contentAlignment = Alignment.Center,
+                content = imageContent,
+            )
+            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp, top = 8.dp), content = controlsContent)
         }
     }
 }
