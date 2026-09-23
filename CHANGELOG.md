@@ -2,6 +2,11 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.2.2] - 2026-09-23
+
+### Changed
+- **The viewfinder no longer fills the screen edge-to-edge.** 0.2.1 fixed *what resolution* Preview negotiated (16:9 instead of 4:3), but `PreviewView` still filled the entire, wider-than-16:9 screen and cropped the now-correct image to do it. Now the preview is sized to its own exact aspect ratio and letterboxed against the edge opposite the controls (left in landscape, top in portrait) - the freed space becomes real black background, and the recipe/film-stock chips, shutter, and mode toggle now live fully inside that reserved area instead of floating over the live image. Zero cropping anywhere now, in either orientation.
+
 ## [0.2.1] - 2026-09-23
 
 ### Fixed

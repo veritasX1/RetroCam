@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -116,10 +118,41 @@ fun CameraScreen(viewModel: CameraViewModel, onOpenSettings: () -> Unit, onOpenP
         CaptureMode.VIDEO -> displayFilmStocks.firstOrNull { it.id == selectedFilmStockId }?.name ?: NO_FILTER_LABEL
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+        // Preview always negotiates 16:9 now (see CameraViewModel.tryBind)
+        // - sized here to its own true aspect ratio instead of being
+        // stretched/cropped to fill the screen's own, different aspect
+        // (landscape phone screens are usually noticeably wider than
+        // 16:9). The freed-up space becomes a genuine black area (this
+        // Box's own background, simply left uncovered) that the controls
+        // live in, instead of floating semi-transparently over a cropped
+        // image - the user explicitly asked for zero cropping, full FOV
+        // always visible.
+        //
+        // sidebarSize is reserved BEFORE fitting the 16:9 rect, so the
+        // controls (recipe/stock chip list + shutter) get a guaranteed
+        // clear area instead of the image simply claiming all available
+        // space and the controls spilling over its edge - sized against
+        // this chip list's actual widest label ("Fujicolor Negative")
+        // plus the shutter column, measured on-device.
+        val isLandscapeConfig = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val sidebarSize = 300.dp
+        val previewWidth: androidx.compose.ui.unit.Dp
+        val previewHeight: androidx.compose.ui.unit.Dp
+        if (isLandscapeConfig) {
+            val availableWidth = maxWidth - sidebarSize
+            previewWidth = minOf(availableWidth, maxHeight * (16f / 9f))
+            previewHeight = minOf(maxHeight, previewWidth * (9f / 16f))
+        } else {
+            val availableHeight = maxHeight - sidebarSize
+            previewHeight = minOf(availableHeight, maxWidth * (16f / 9f))
+            previewWidth = minOf(maxWidth, previewHeight * (9f / 16f))
+        }
         AndroidView(
             modifier = Modifier
-                .fillMaxSize()
+                .width(previewWidth)
+                .height(previewHeight)
+                .align(if (isLandscapeConfig) Alignment.TopStart else Alignment.TopCenter)
                 .pointerInput(Unit) {
                     detectTransformGestures { _, _, zoom, _ ->
                         viewModel.setZoomRatio(viewModel.zoomRatio.value * zoom)
