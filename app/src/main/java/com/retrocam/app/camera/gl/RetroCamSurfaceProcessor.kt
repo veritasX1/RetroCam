@@ -44,6 +44,14 @@ class RetroCamSurfaceProcessor(
 
     private var inputSurfaceTexture: SurfaceTexture? = null
     private var inputSurface: Surface? = null
+    // The actual camera-stream resolution feeding sTexture, distinct from
+    // each output's own size (which can differ per use case - e.g. a
+    // lower-res live preview vs a full-res photo capture, both sharing
+    // this same input stream) - used for texel-based shader math
+    // (softness blur radius, grain sizing) so those stay correctly scaled
+    // to the real source image instead of whichever output happens to be
+    // rendering. See LookRenderer.drawFrame's inputWidth/inputHeight.
+    private var inputSize: Size = Size(1, 1)
     private val texMatrix = FloatArray(16)
     private val transformedMatrix = FloatArray(16)
 
@@ -80,6 +88,8 @@ class RetroCamSurfaceProcessor(
         glHandler.post {
             if (releaseRequested) { request.willNotProvideSurface(); return@post }
             val size = request.resolution
+            inputSize = size
+            Log.d(TAG, "Input surface resolution: ${size.width}x${size.height}")
             val texture = SurfaceTexture(oesTextureId)
             texture.setDefaultBufferSize(size.width, size.height)
             texture.setOnFrameAvailableListener({ st -> glHandler.post { drawFrame(st) } }, glHandler)
@@ -116,6 +126,7 @@ class RetroCamSurfaceProcessor(
                 }
             }
             val eglSurface = eglCore.createWindowSurface(surface)
+            Log.d(TAG, "Output surface size: ${surfaceOutput.size.width}x${surfaceOutput.size.height}")
             outputs.add(Output(surfaceOutput, eglSurface, surfaceOutput.size))
         }
     }
@@ -129,7 +140,7 @@ class RetroCamSurfaceProcessor(
         for (output in outputs.toList()) {
             output.surfaceOutput.updateTransformMatrix(transformedMatrix, texMatrix)
             eglCore.makeCurrent(output.eglSurface)
-            renderer.drawFrame(oesTextureId, transformedMatrix, look, output.size.width, output.size.height)
+            renderer.drawFrame(oesTextureId, transformedMatrix, look, output.size.width, output.size.height, inputSize.width, inputSize.height)
             eglCore.swapBuffers(output.eglSurface)
         }
     }
