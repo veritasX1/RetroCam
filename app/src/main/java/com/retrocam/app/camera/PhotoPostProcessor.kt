@@ -1,5 +1,6 @@
 package com.retrocam.app.camera
 
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -9,6 +10,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuffXfermode
 import android.location.Location
 import android.net.Uri
+import android.provider.MediaStore
 import androidx.core.content.res.ResourcesCompat
 import androidx.exifinterface.media.ExifInterface
 import com.retrocam.app.R
@@ -169,10 +171,37 @@ object PhotoPostProcessor {
             }
         }
 
-        context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
-        }
+        // Compress to memory FIRST, then write - opening the real output
+        // stream in "wt" mode truncates the file immediately, before a
+        // single byte of the new JPEG exists. Writing bitmap.compress()
+        // straight into that stream means any failure partway through
+        // (OOM, IO error, the process getting killed) leaves the file
+        // empty or truncated - the original photo is gone, even though
+        // nothing about the capture itself failed. Encoding to a byte
+        // buffer first means the real file is only ever touched once a
+        // complete, valid replacement actually exists.
+        val encoded = java.io.ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it) }
         bitmap.recycle()
+        context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
+            out.write(encoded.toByteArray())
+        }
+        // The file's actual bytes just changed size (stamp/EXIF added) via
+        // a direct stream write, which MediaStore doesn't always notice on
+        // its own - other apps reading this URI's SIZE/DATE_MODIFIED
+        // columns (a gallery, Immich's own MediaStore sync, etc.) could
+        // otherwise see stale metadata from the moment ImageCapture first
+        // inserted the row, before this post-processing pass touched it.
+        runCatching {
+            context.contentResolver.update(
+                uri,
+                ContentValues().apply {
+                    put(MediaStore.MediaColumns.SIZE, encoded.size())
+                    put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                },
+                null,
+                null,
+            )
+        }
     }
 
     private fun writeExif(context: Context, uri: Uri, recipeDescription: String, location: Location?) {

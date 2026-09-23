@@ -39,10 +39,16 @@ object GrainTexture {
         GLES20.glGenTextures(1, textureIds, 0)
         val id = textureIds[0]
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, id)
-        // GL_NEAREST keeps individual grain texels crisp rather than
-        // smoothing them into soft blobs when sampled.
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        // GL_LINEAR, not GL_NEAREST - nearest-neighbor sampling shows each
+        // grain texel as a hard-edged flat square once it's magnified past
+        // 1:1 (the live preview's lower resolution, or just zooming into a
+        // photo afterward), which reads as blocky/"digital" rather than
+        // like actual film grain - confirmed by eye, this was the direct
+        // cause of a "looks pixelated when I zoom in" report. Linear
+        // interpolation between texels keeps the same real scanned grain
+        // texture but with smooth transitions instead of hard blocks.
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_REPEAT)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_REPEAT)
         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
