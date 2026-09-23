@@ -2,6 +2,11 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.5.1] - 2026-09-23
+
+### Fixed
+- **Photo editor squeezed the image down to a sliver in landscape.** The editor always stacked the image above a full-width controls column regardless of orientation - fine in portrait, but on a landscape screen the short available height meant the sliders/crop controls ate most of the vertical space. Landscape now uses a side-by-side layout instead: the image gets the full available height on the left, and a fixed-width sidebar with the same controls sits on the right. Portrait is unchanged.
+
 ## [0.5.0] - 2026-09-23
 
 ### Changed
