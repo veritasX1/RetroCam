@@ -6,6 +6,7 @@ import android.graphics.Matrix
 import android.opengl.GLES20
 import android.opengl.GLUtils
 import com.retrocam.app.camera.GrainTexture
+import com.retrocam.app.camera.LutTexture
 import com.retrocam.app.camera.ShaderSource
 import com.retrocam.app.data.RenderLook
 import java.nio.ByteBuffer
@@ -43,6 +44,7 @@ object PhotoLookBaker {
         var program = 0
         var sourceTextureId = -1
         var grainTextureId = -1
+        var lutTextureId = -1
         try {
             program = GlUtil.createProgram(ShaderSource.VERTEX, ShaderSource.FRAGMENT_PHOTO)
             GLES20.glUseProgram(program)
@@ -52,6 +54,10 @@ object PhotoLookBaker {
             val uTexMatrixLoc = GLES20.glGetUniformLocation(program, "uTexMatrix")
             val uTextureLoc = GLES20.glGetUniformLocation(program, "sTexture")
             val uGrainLoc = GLES20.glGetUniformLocation(program, "sGrain")
+            val uLutLoc = GLES20.glGetUniformLocation(program, "sLut")
+            val uLutStrengthLoc = GLES20.glGetUniformLocation(program, "uLutStrength")
+            val uLutSizeLoc = GLES20.glGetUniformLocation(program, "uLutSize")
+            val uLutTilesPerRowLoc = GLES20.glGetUniformLocation(program, "uLutTilesPerRow")
             val uWarmthLoc = GLES20.glGetUniformLocation(program, "uWarmth")
             val uSaturationLoc = GLES20.glGetUniformLocation(program, "uSaturation")
             val uContrastLoc = GLES20.glGetUniformLocation(program, "uContrast")
@@ -69,6 +75,7 @@ object PhotoLookBaker {
 
             sourceTextureId = uploadTexture(source)
             grainTextureId = if (look.grainSetKey.isNotEmpty()) GrainTexture.upload(context, look.grainSetKey) else -1
+            lutTextureId = if (look.lutKey.isNotEmpty()) LutTexture.upload(context, look.lutKey) else -1
 
             val positionBuffer = GlUtil.fullScreenQuadPositions()
             positionBuffer.position(0)
@@ -92,6 +99,13 @@ object PhotoLookBaker {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, if (grainTextureId != -1) grainTextureId else sourceTextureId)
             GLES20.glUniform1i(uGrainLoc, 1)
+
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, if (lutTextureId != -1) lutTextureId else sourceTextureId)
+            GLES20.glUniform1i(uLutLoc, 2)
+            GLES20.glUniform1f(uLutStrengthLoc, if (lutTextureId == -1) 0f else look.lutStrength)
+            GLES20.glUniform1f(uLutSizeLoc, LutTexture.SIZE)
+            GLES20.glUniform1f(uLutTilesPerRowLoc, LutTexture.TILES_PER_ROW)
 
             GLES20.glUniform1f(uWarmthLoc, look.warmth)
             GLES20.glUniform1f(uSaturationLoc, look.saturation)
@@ -119,6 +133,7 @@ object PhotoLookBaker {
         } finally {
             if (sourceTextureId != -1) GLES20.glDeleteTextures(1, intArrayOf(sourceTextureId), 0)
             if (grainTextureId != -1) GLES20.glDeleteTextures(1, intArrayOf(grainTextureId), 0)
+            if (lutTextureId != -1) GLES20.glDeleteTextures(1, intArrayOf(lutTextureId), 0)
             if (program != 0) GLES20.glDeleteProgram(program)
             eglCore.releaseSurface(pbuffer)
             eglCore.release()

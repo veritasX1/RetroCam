@@ -4,6 +4,7 @@ import android.content.Context
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import com.retrocam.app.camera.GrainTexture
+import com.retrocam.app.camera.LutTexture
 import com.retrocam.app.camera.ShaderSource
 import com.retrocam.app.data.RenderLook
 
@@ -28,9 +29,15 @@ class LookRenderer {
     private var uVignetteLoc = 0
     private var uTexelSizeLoc = 0
     private var uGrainOffsetLoc = 0
+    private var uLutLoc = 0
+    private var uLutStrengthLoc = 0
+    private var uLutSizeLoc = 0
+    private var uLutTilesPerRowLoc = 0
 
     private var grainTextureId = -1
     private var currentGrainSetKey: String? = null
+    private var lutTextureId = -1
+    private var currentLutKey: String? = null
     private lateinit var appContext: Context
     private val positionBuffer = GlUtil.fullScreenQuadPositions()
     private val texCoordBuffer = GlUtil.fullScreenQuadTexCoords()
@@ -57,10 +64,21 @@ class LookRenderer {
         uVignetteLoc = GLES20.glGetUniformLocation(program, "uVignette")
         uTexelSizeLoc = GLES20.glGetUniformLocation(program, "uTexelSize")
         uGrainOffsetLoc = GLES20.glGetUniformLocation(program, "uGrainOffset")
+        uLutLoc = GLES20.glGetUniformLocation(program, "sLut")
+        uLutStrengthLoc = GLES20.glGetUniformLocation(program, "uLutStrength")
+        uLutSizeLoc = GLES20.glGetUniformLocation(program, "uLutSize")
+        uLutTilesPerRowLoc = GLES20.glGetUniformLocation(program, "uLutTilesPerRow")
         // A sensible default so grainTextureId is always a valid texture,
         // even before the first look with grain enabled is drawn.
         grainTextureId = GrainTexture.upload(appContext, "35mm_standard")
         currentGrainSetKey = "35mm_standard"
+        // Same reasoning for the LUT unit - which specific LUT is bound
+        // here doesn't matter, since drawFrame always forces
+        // uLutStrength to 0 whenever look.lutKey is empty (not just
+        // whatever look.lutStrength happens to be), so this default is
+        // never actually sampled until a look with a real lutKey draws.
+        lutTextureId = LutTexture.upload(appContext, "digital_to_film")
+        currentLutKey = "digital_to_film"
     }
 
     /** Creates and returns a new GL_TEXTURE_EXTERNAL_OES texture id, ready
@@ -102,6 +120,14 @@ class LookRenderer {
             grainTextureId = newId
             currentGrainSetKey = look.grainSetKey
         }
+        if (look.lutKey.isNotEmpty() && look.lutKey != currentLutKey) {
+            val newId = LutTexture.upload(appContext, look.lutKey)
+            if (lutTextureId != -1) {
+                GLES20.glDeleteTextures(1, intArrayOf(lutTextureId), 0)
+            }
+            lutTextureId = newId
+            currentLutKey = look.lutKey
+        }
 
         positionBuffer.position(0)
         GLES20.glVertexAttribPointer(aPositionLoc, 2, GLES20.GL_FLOAT, false, 0, positionBuffer)
@@ -120,6 +146,16 @@ class LookRenderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, grainTextureId)
         GLES20.glUniform1i(uGrainLoc, 1)
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lutTextureId)
+        GLES20.glUniform1i(uLutLoc, 2)
+        // Forced to 0 whenever there's no real LUT selected, regardless
+        // of look.lutStrength's own value - see the comment on the
+        // default LUT upload in init().
+        GLES20.glUniform1f(uLutStrengthLoc, if (look.lutKey.isEmpty()) 0f else look.lutStrength)
+        GLES20.glUniform1f(uLutSizeLoc, LutTexture.SIZE)
+        GLES20.glUniform1f(uLutTilesPerRowLoc, LutTexture.TILES_PER_ROW)
 
         GLES20.glUniform1f(uWarmthLoc, look.warmth)
         GLES20.glUniform1f(uSaturationLoc, look.saturation)
@@ -160,6 +196,10 @@ class LookRenderer {
         if (grainTextureId != -1) {
             GLES20.glDeleteTextures(1, intArrayOf(grainTextureId), 0)
             grainTextureId = -1
+        }
+        if (lutTextureId != -1) {
+            GLES20.glDeleteTextures(1, intArrayOf(lutTextureId), 0)
+            lutTextureId = -1
         }
     }
 }

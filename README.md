@@ -88,12 +88,14 @@ Fixing the resolution mismatch alone still left the *display* of that correctly-
 
 The recipe/film-stock picker itself also moved as part of this: in landscape it's now a horizontally swipeable strip directly under the live image (with a black fade-out on both edges hinting there's more to scroll to), rather than a vertical list squeezed into the right-side black area - that area now just holds the shutter, mode toggle, thumbnail, and (photo mode only) the aspect ratio picker.
 
-### OldRoll filter port (in progress)
-Porting a set of filter looks from the OldRoll app into RetroCam's recipe system, replacing/supplementing the existing Fuji-recipe-style presets — blocked on getting a look at OldRoll's actual filter list (not installed on the current test device).
+### Cinematic Look (3D-LUT color grading)
+Inspected OldRoll (a modded APK, architecture study only - no assets or code taken) and 8mm Vintage Camera (iOS) to understand how filter-style camera apps structure their looks: a LUT/overlay stack composited with Photoshop-style blend modes, layered independently of any parametric warmth/saturation/contrast controls. Built the same idea into RetroCam as a standalone "Cinematic Look" selector (Einstellungen → Cinematic Look) - a real 3D color-cube LUT (`.cube`, the DaVinci Resolve/Adobe standard) baked into a 2D tiled texture and sampled in the shader (`ShaderSource.applyLut`, `LutTexture`), at an adjustable strength, independent of and combinable with any Fuji-style recipe or film stock (including "Kein Filter"). Four looks are bundled: Digital to Film, Modern 35mm, Vintage, Bleach Bypass.
 
 ## Asset licensing note
 
 The bundled real film grain plates (`app/src/main/assets/grain/`) were extracted from grain scans sourced from tdcat.com. Confirm your own rights/license before redistributing this repository or its assets further.
+
+The bundled Cinematic Look 3D LUTs (`app/src/main/assets/luts/`) are free downloads from [cinecolor.io](https://cinecolor.io/), included with attribution as required by their license - see the "Cinematic Look" section in Einstellungen.
 
 ## Building
 

@@ -28,6 +28,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
 import com.retrocam.app.data.CaptureAspectRatio
 import com.retrocam.app.data.CaptureMode
+import com.retrocam.app.data.CinematicLook
 import com.retrocam.app.data.DateStampSettings
 import com.retrocam.app.data.FilmStockPreset
 import com.retrocam.app.data.GrainBlendMode
@@ -45,6 +46,7 @@ import com.retrocam.app.data.Softness
 import com.retrocam.app.data.formatCoordinates
 import com.retrocam.app.data.toDescription
 import com.retrocam.app.data.toRenderLook
+import com.retrocam.app.data.withCinematicLook
 import com.retrocam.app.data.withGrainOverride
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -83,6 +85,8 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
     val grainOverride: StateFlow<GrainOverride> = settings.grainOverride.eager(GrainOverride.STANDARD)
     val captureAspectRatio: StateFlow<CaptureAspectRatio> = settings.captureAspectRatio.eager(CaptureAspectRatio.RATIO_4_3)
     val grainBlendMode: StateFlow<GrainBlendMode> = settings.grainBlendMode.eager(GrainBlendMode.FILMKORN)
+    val cinematicLook: StateFlow<CinematicLook> = settings.cinematicLook.eager(CinematicLook.NONE)
+    val cinematicLookStrength: StateFlow<Float> = settings.cinematicLookStrength.eager(0.65f)
     val videoFps: StateFlow<Int> = settings.videoFps.eager(0)
     val locationEnabled: StateFlow<Boolean> = settings.locationEnabled.eager(false)
     val dateStampSettings: StateFlow<DateStampSettings> = settings.dateStampSettings.eager(DateStampSettings())
@@ -193,7 +197,13 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 .combine(grainOverride) { (triple, stockId, extraSoftness), grain -> Triple(triple, stockId, extraSoftness to grain) }
                 .combine(grainBlendMode) { (triple, stockId, softnessAndGrain), blendMode ->
                     val (extraSoftness, grain) = softnessAndGrain
-                    updateLook(triple.first, triple.second, triple.third, stockId, extraSoftness, grain, blendMode)
+                    Triple(triple, stockId, Triple(extraSoftness, grain, blendMode))
+                }
+                .combine(cinematicLook) { (triple, stockId, rest), look -> Triple(triple, stockId, rest to look) }
+                .combine(cinematicLookStrength) { (triple, stockId, restAndLook), lookStrength ->
+                    val (rest, look) = restAndLook
+                    val (extraSoftness, grain, blendMode) = rest
+                    updateLook(triple.first, triple.second, triple.third, stockId, extraSoftness, grain, blendMode, look, lookStrength)
                 }
                 .collect {}
         }
@@ -207,6 +217,8 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         extraSoftness: Softness,
         grainOverride: GrainOverride,
         grainBlendMode: GrainBlendMode,
+        cinematicLook: CinematicLook,
+        cinematicLookStrength: Float,
     ) {
         // "No filter" stays completely clean - the grain switch only kicks
         // in once an actual recipe/film stock is applying a look, it
@@ -223,10 +235,16 @@ class CameraViewModel(app: android.app.Application) : AndroidViewModel(app) {
         val resolved = base ?: RenderLook.NEUTRAL
         val combinedSoftness = (resolved.softness + extraSoftness.blurAmount).coerceIn(0f, 1f)
         val withSoftness = resolved.copy(softness = combinedSoftness, grainBlendMode = grainBlendMode)
-        currentLook.set(if (isNoFilter) withSoftness else withSoftness.withGrainOverride(grainOverride))
+        val withGrain = if (isNoFilter) withSoftness else withSoftness.withGrainOverride(grainOverride)
+        // Applied regardless of isNoFilter - unlike grain, the cinematic
+        // LUT is an independent global selector meant to work on top of
+        // "Kein Filter" too, not just when a recipe/film-stock is active.
+        currentLook.set(withGrain.withCinematicLook(cinematicLook, cinematicLookStrength))
     }
 
     fun setGrainBlendMode(value: GrainBlendMode) { viewModelScope.launch { settings.setGrainBlendMode(value) } }
+    fun setCinematicLook(value: CinematicLook) { viewModelScope.launch { settings.setCinematicLook(value) } }
+    fun setCinematicLookStrength(value: Float) { viewModelScope.launch { settings.setCinematicLookStrength(value) } }
 
     // Now requires a rebind (see tryBind's ViewPort/UseCaseGroup comment -
     // only one of ImageCapture/VideoCapture is ever bound at a time), so

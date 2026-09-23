@@ -26,6 +26,14 @@ data class RenderLook(
      * which case the renderer just leaves whatever was already bound. */
     val grainSetKey: String = "",
     val grainBlendMode: GrainBlendMode = GrainBlendMode.FILMKORN,
+    /** A creative color-grade LUT layered on top of the parametric look
+     * above (warmth/saturation/contrast/etc) - see LutTexture, empty
+     * disables it entirely (the renderer skips sampling sLut). Currently
+     * all bundled LUTs are 33x33x33 .cube exports baked into a 6x6-tile
+     * 2D texture - LutTexture.SIZE/TILES_PER_ROW assume that for every
+     * key; a differently-sized LUT would need real per-key metadata. */
+    val lutKey: String = "",
+    val lutStrength: Float = 1f,
 ) {
     companion object {
         val NEUTRAL = RenderLook(
@@ -213,6 +221,18 @@ fun RenderLook.withGrainOverride(override: GrainOverride): RenderLook {
     val intensity = if (grainIntensity > 0f) grainIntensity else 0.35f
     return copy(grainIntensity = intensity, grainSetKey = "${gauge}_$tier")
 }
+
+/** Layers the user's globally-selected cinematic LUT (independent of
+ * whatever recipe/film-stock is active - see CinematicLook) on top of an
+ * already-resolved look, at [strength]. NONE clears any lutKey the
+ * recipe/film-stock might otherwise have carried, since only this global
+ * selector is meant to drive it for now - see RenderLook.lutKey. */
+fun RenderLook.withCinematicLook(look: CinematicLook, strength: Float): RenderLook =
+    if (look.lutKey == null) {
+        copy(lutKey = "")
+    } else {
+        copy(lutKey = look.lutKey, lutStrength = strength.coerceIn(0f, 1f))
+    }
 
 fun FilmStockPreset.toRenderLook(): RenderLook {
     // Video stocks already carry a real gauge (8mm/16mm/35mm/...), so they
