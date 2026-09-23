@@ -2,6 +2,14 @@
 
 All notable changes to RetroCam are documented here. Pre-1.0 — expect breaking changes and open issues; see each release's "Known issues" for what's still unresolved.
 
+## [0.4.1] - 2026-09-23
+
+### Fixed
+- **Cinematic Look LUTs (Digital to Film, Modern 35mm) rendered flat and/or too dark.** CineColor's LUTs are professional grading LUTs designed for already-flat/log camera footage, so their own neutral black/white points weren't anchored to true 0/1 (verified: digital_to_film's black was lifted to ~0.05 and white capped at ~0.90-0.92; modern_35mm's white capped at ~0.92-0.93) - applied directly to an already-graded sRGB photo, this compressed the usable contrast range. Fixed by normalizing each LUT's own black/white points back to true 0/1 per channel before baking to the texture (preserves the actual color grade/curve shape, just reclaims full contrast). Verified on-device.
+
+### Changed
+- **Landscape: the live image now fills the full screen height.** Previously letterboxed to leave a separate reserved strip for the filter/recipe picker below it; that strip is now overlaid directly on the image's own bottom edge instead. Also shrank the reserved right-side sidebar (220dp → 170dp) since it read as too dominant relative to what the shutter/aspect-ratio controls actually need - the image renders wider as a result. Applies to both photo and video mode.
+
 ## [0.4.0] - 2026-09-23
 
 ### Added
